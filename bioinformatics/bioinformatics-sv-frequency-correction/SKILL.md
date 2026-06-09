@@ -7,6 +7,11 @@ trigger:
   - Structural variant feature extraction from BAM files
   - Small-label regression in genomics
   - One-hot encoding for SV types (FusionType)
+  - Semi-supervised SV frequency correction with unlabeled data
+  - Pseudo-label self-training for SV calibration
+  - Denoising autoencoder for feature learning in genomics
+  - Consistency regularization for small-label regression
+  - parser_table feature cache sharing across scripts
 ---
 
 # SV Frequency Correction Pipeline
@@ -58,7 +63,35 @@ When labeled data is tiny (~26 samples):
 2. **Tree models**: XGBoost/LightGBM with strong regularization, LOO-CV
 3. **Bayesian regression**: Prior that corrected ≈ detected, posterior updated by ddPCR
 
-**Semi-supervised approaches are NOT recommended** for this task — unlabeled data lacks ground truth so it cannot directly help learn the correction mapping. Use unlabeled data only for distribution analysis.
+## Semi-Supervised Learning with Unlabeled Data
+
+When large unlabeled pools exist (e.g. 22K unlabeled vs 936 labeled rows), three approaches
+can leverage the unlabeled data. All are implemented as standalone scripts alongside train.py.
+
+See `references/semi_supervised.md` for implementation details, CLI usage, and pitfalls.
+
+| Method | Script | Idea |
+|--------|--------|------|
+| Self-Training | `self_training.py` | Iterative pseudo-label generation → confidence filter → merge → retrain |
+| Autoencoder | `semi_supervised_ae.py` | Denoising AE on all data → latent features → supervised regression |
+| Consistency Reg | `consistency_reg.py` | Neural net with MSE + consistency loss (PyTorch) or ensemble-consistency (numpy fallback) |
+
+### Shared data loading (`_data.py`)
+
+`load_combined_features(labeled_tsv, unlabeled_tsv, outdir, feature_cache_dir=None)`
+extracts BAM features for both datasets via `parser_table()`, combines them, runs
+`preprocess_features()` on the merged matrix, and returns
+`(labeled_df, combined_df, feature_columns, no_scale_columns)`. BAM extraction
+results are cached to avoid re-processing. Pass `feature_cache_dir` to share the
+cache across multiple scripts (see `references/semi_supervised.md` SP7).
+
+### Key design decisions
+- Pseudo-label weight = 0.5x labeled weight (conservative)
+- Confidence filtering: combined strategy (range + residual + top-k) is safest
+- Autoencoder uses denoising (Gaussian noise → reconstruct clean) for robustness
+- Consistency regularization: PyTorch mode for gradient-level λ*con_loss; numpy fallback uses ensemble agreement
+- All methods compare against a labeled-only baseline using the same train/test split
+- Grouped train/test split via `--group-cols` (default `["原始编号"]`, repeatable for composite keys)
 
 ## Key Functions
 
@@ -136,6 +169,30 @@ df_feature, diagnostics = preprocess_features(
 ```
 
 The metadata saves `no_scale_columns` and `scale_column_indices` so `apply_preprocessing()` respects the same split at prediction time. Backward-compatible: old metadata without these fields defaults to scaling all columns.
+
+### P6: `parser_table(outdir=...)` creates duplicate files
+
+`parser_table()` always writes to `{outdir}/raw_extracted_features.tsv` when `outdir`
+is set. If the caller also saves the returned DataFrame to a separate cache path
+(e.g. `labeled_raw_features.tsv`), you end up with two identical files in the same
+directory.
+
+**Fix**: Pass `outdir=None` to `parser_table()` so it only returns the DataFrame
+without writing. Handle file writing yourself:
+```python
+df = parser_table(infile=tsv_path, outdir=None, extra_keep_cols=valid_keep, ...)
+df.to_csv(cache_path, sep="\t", index=False)
+```
+
+### P7: `parser_table()` crashes on missing `extra_keep_cols`
+
+`parser_table()` does `df = df[bam_columns + extra_keep_cols]` without checking
+column existence. When the input TSV lacks a column listed in `extra_keep_cols`
+(e.g. `ddPCR_AF` is absent from unlabeled data), this raises `KeyError`.
+
+**Fix**: Filter `extra_keep_cols` against the input file's header before calling
+`parser_table()`. Add missing columns as NaN after extraction. See
+`references/semi_supervised.md` SP6 for the code pattern.
 
 ## Data Collection
 

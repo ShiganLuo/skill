@@ -1,0 +1,2 @@
+usage: daily_git_push.py [-h] [-m MESSAGE]
+daily_git_push.py: error: unrecognized arguments: --push-now
