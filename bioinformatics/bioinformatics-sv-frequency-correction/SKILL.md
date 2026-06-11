@@ -170,7 +170,28 @@ df_feature, diagnostics = preprocess_features(
 
 The metadata saves `no_scale_columns` and `scale_column_indices` so `apply_preprocessing()` respects the same split at prediction time. Backward-compatible: old metadata without these fields defaults to scaling all columns.
 
-### P6: `parser_table(outdir=...)` creates duplicate files
+### P6: `diagnostics` dict does NOT contain `processed_feature_columns`
+
+`preprocess_features()` returns a `diagnostics` dict with keys:
+`cond_before`, `min_sv_before`, `removed_by_variance`, `dropped_correlated`,
+`correlation_clusters`, `cond_after`, `min_sv_after`.
+
+The key `processed_feature_columns` is written to `preprocessing_metadata.json`
+on disk but is **not** in the returned diagnostics dict. Using
+`diagnostics.get("processed_feature_columns", [])` silently returns `[]`,
+causing all numeric BAM features to be dropped (only sv_type one-hot survives).
+
+**Fix**: Compute feature columns directly from the processed DataFrame:
+```python
+combined_processed, diagnostics = preprocess_features(combined, numeric_cols, ...)
+# WRONG: diagnostics.get("processed_feature_columns", [])  → empty list
+# RIGHT: read columns from the returned DataFrame
+non_feature = set(META_COLUMNS) | {"_is_labeled"}
+final_features = [c for c in combined_processed.columns
+                  if c not in non_feature and pd.api.types.is_numeric_dtype(combined_processed[c])]
+```
+
+### P7: `parser_table(outdir=...)` creates duplicate files
 
 `parser_table()` always writes to `{outdir}/raw_extracted_features.tsv` when `outdir`
 is set. If the caller also saves the returned DataFrame to a separate cache path
@@ -184,7 +205,7 @@ df = parser_table(infile=tsv_path, outdir=None, extra_keep_cols=valid_keep, ...)
 df.to_csv(cache_path, sep="\t", index=False)
 ```
 
-### P7: `parser_table()` crashes on missing `extra_keep_cols`
+### P8: `parser_table()` crashes on missing `extra_keep_cols`
 
 `parser_table()` does `df = df[bam_columns + extra_keep_cols]` without checking
 column existence. When the input TSV lacks a column listed in `extra_keep_cols`
@@ -192,9 +213,77 @@ column existence. When the input TSV lacks a column listed in `extra_keep_cols`
 
 **Fix**: Filter `extra_keep_cols` against the input file's header before calling
 `parser_table()`. Add missing columns as NaN after extraction. See
-`references/semi_supervised.md` SP6 for the code pattern.
+`references/semi_supervised.md` SP8 for the code pattern.
+
+### P9: NaN group keys corrupt grouped splits
+
+When `原始编号` (or other group column) has NaN values, `groups.astype(str)` converts
+them to the string `"nan"`, which groups all NaN rows together as if they were one sample.
+This corrupts both GroupShuffleSplit and GroupKFold.
+
+**Fix**: Use `grouped_train_test_split()` from `_data.py` which handles NaN groups
+automatically — rows with NaN group keys are excluded from the split and added to
+the training set (they still have valid labels):
+
+```python
+from _data import grouped_train_test_split
+
+train_idx, test_idx, train_groups = grouped_train_test_split(
+    X=X_labeled, y=y_labeled, df=labeled_df.loc[labeled_idx],
+    group_cols=group_cols, test_size=test_size, random_state=random_state,
+)
+# train_groups is None when no group columns available (falls back to KFold)
+```
+
+### P10: Running all semi-supervised scripts concurrently thrashes CPU
+
+Each script uses `n_jobs=-1` in GridSearchCV, spawning ~10 loky workers.
+Running all 3 scripts simultaneously creates 30+ processes competing for CPU,
+causing severe contention — each worker gets only a fraction of a core.
+
+**Fix**: Run scripts sequentially, not in parallel:
+```bash
+python self_training.py ...       # wait for completion
+python semi_supervised_ae.py ...  # then this
+python consistency_reg.py ...     # then this
+```
+
+### P11: `_fit_model_with_cv(groups=None)` causes CV data leakage
+
+When train/test split uses GroupShuffleSplit, the same groups must be passed to
+`_fit_model_with_cv()` for the inner CV. With `groups=None`, `KFold` is used
+instead of `GroupKFold`, allowing the same sample to appear in both train and
+validation folds during hyperparameter search.
+
+**Fix**: Save train groups after the outer split and pass them through:
+```python
+train_groups = groups.to_numpy()[train_idx]  # after GroupShuffleSplit
+model, params = _fit_model_with_cv(..., groups=train_groups, ...)
+```
 
 ## Data Collection
+
+## Plotting Utilities
+
+`question.py` provides publication-quality plots: `single_violin_plot`, `single_bar_plot`,
+`paired_violin_plot`, `violin_plot`. All support threshold lines with percentage legends.
+See `references/plotting_utilities.md` for API details and usage examples.
+
+Key matplotlib/seaborn parameters to remember:
+- `inner="box"` shows box plot inside violin; `inner=None` is empty (only custom median line)
+- `cut=0` clips violin at data range (no extension beyond min/max); `cut=1` extends 1 bandwidth
+- X-axis labels should use `rotation=45, ha="right"` to avoid overlap
+- `xtick_fontsize` default 10 (not 12 — too large for category labels)
+
+## User Preferences
+
+- **All imports at module top level.** Never use inline `from X import Y` inside functions.
+  The user uses conda (not uv), so deferred imports don't help with install friction.
+- **Numpy-style English docstrings on all functions.** Parameters/Returns/Raises sections.
+  Chinese conversation, English code and docstrings.
+- **Diagnostic-first debugging.** When something goes wrong, search logs and inspect
+  intermediate files before assuming a root cause. Don't jump to conclusions — trace the
+  actual data flow (e.g. check if raw features have BAM columns before assuming extraction failed).
 
 `collect_data.py` handles:
 - `collect_OncoTop_sv()`: Extract SV sheet from OncoTop Excel/TSV

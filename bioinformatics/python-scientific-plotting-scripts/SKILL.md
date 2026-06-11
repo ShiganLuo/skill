@@ -1,6 +1,6 @@
 ---
 name: python-scientific-plotting-scripts
-description: Refactor and author Python scientific plotting scripts — multi-format output, proper typing, unified CLI, NumPy docstrings, graceful statistical testing. Use when creating or refactoring matplotlib/seaborn-based analysis scripts for genomics/bioinformatics workflows.
+description: Refactor and author Python scientific plotting scripts — multi-format output, proper typing, unified CLI, NumPy docstrings, graceful statistical testing, significance brackets (宝盖头 style). Use when creating or refactoring matplotlib/seaborn-based analysis scripts for genomics/bioinformatics workflows.
 tags: [python, matplotlib, typing, argparse, docstrings, bioinformatics, plotting]
 ---
 
@@ -234,16 +234,151 @@ for gene_name in args.genes:
 
 **Never** use `nargs="+"` for this — `action="append"` is more explicit and matches the `-f`/`--format` pattern used across the project.
 
-## 8. Multi-Group Comparison Plots
+## 8. Multi-Group Comparison Plots & Significance Brackets
 
-For grouped bar charts comparing N groups:
+### Grouped Bar Chart Layout
 
-- **Bar offsets**: `total_width / n_groups`, centered: `offset = bar_width * (i - (n_groups-1) / 2)`
-- **Pairwise testing**: iterate `C(n, 2)` pairs with chi2, store ALL results including "ns"
-- **Bracket style**: 宝盖头 — single polyline from `(x1-tick_x, y_tick)` → `(x1, y_hat)` → `(x2, y_hat)` → `(x2+tick_x, y_tick)`. NEVER draw as 3 separate lines (causes line-cap overlap at junctions).
-- **Bracket anti-overlap**: reset `bracket_offset` PER SV type (not globally). Use `tick_depth + TEXT_PT + bracket_gap` as increment. `bracket_gap` controls the actual vertical gap between bracket units.
-- **Significance styling**: ns = SAME black color as stars. Distinguish by fontsize (12 vs 9) and weight (bold vs normal) only. `bracket_lw=0.8` for clean look.
-- **Broken axis**: auto-detect necessity — only enable when `global_max > sig_max * 2.0`. When all bars are similar height, fall back to single axes to avoid bracket clipping.
-- **Test method**: support both `chi2_contingency` and `fisher_exact` via `test_method` parameter. Fisher is better for small samples.
+For N groups, compute bar positions:
 
-See `matplotlib-significance-brackets` skill for full implementation details.
+```python
+n_groups = len(group_order)
+total_width = 0.8
+bar_width = total_width / n_groups
+offsets = [bar_width * (i - (n_groups - 1) / 2) for i in range(n_groups)]
+
+cmap = plt.cm.tab10
+colors = {g: cmap(i / max(n_groups - 1, 1)) for i, g in enumerate(group_order)}
+
+for i, g in enumerate(group_order):
+    ax.bar(x + offsets[i], pivot[g], bar_width, color=colors[g], label=legend_map[g])
+```
+
+### Pairwise Chi2 with Degenerate Table Guard
+
+Iterate all C(n, 2) pairs and store ALL results including "ns":
+
+```python
+all_pairs: Dict[str, List[tuple]] = {}
+for sv in pivot.index:
+    pairs = []
+    for i, g1 in enumerate(group_order):
+        for g2 in group_order[i + 1:]:
+            idx1 = list(group_order).index(g1)
+            idx2 = list(group_order).index(g2)
+            table = np.array([
+                [pivot.loc[sv, g1], pivot[g1].sum() - pivot.loc[sv, g1]],
+                [pivot.loc[sv, g2], pivot[g2].sum() - pivot.loc[sv, g2]],
+            ])
+            if table.min() < 0 or table.sum() == 0 \
+               or (table.sum(axis=0) == 0).any() \
+               or (table.sum(axis=1) == 0).any():
+                continue
+            try:
+                _, p, _, _ = chi2_contingency(table)
+            except ValueError:
+                continue
+            pairs.append((idx1, idx2, p_to_star(p)))
+    all_pairs[sv] = pairs
+```
+
+Support both `chi2_contingency` and `fisher_exact` via a `test_method` parameter — Fisher is better for small samples.
+
+### Auto-Detect Broken Axis
+
+Only enable when the tallest bar dominates — otherwise fall back to single axes to avoid bracket clipping:
+
+```python
+global_max = pivot.values.max()
+sig_sv_list = [sv for sv, pairs in all_pairs.items()
+               if any(s != "ns" for _, _, s in pairs)]
+sig_max = pivot.loc[sig_sv_list].values.max() if sig_sv_list else np.median(pivot.values)
+need_broken = use_broken_axis and (global_max > sig_max * 2.0)
+```
+
+### 宝盖头 Bracket Style (Full Implementation)
+
+Horizontal line from bar1 center to bar2 center, with OUTWARD diagonal ticks `\` and `/` pointing at bar centers. Drawn as a SINGLE polyline to avoid line-cap overlap at junctions.
+
+```python
+LEG_PT = 8    # initial gap from bar top to first bracket (display points)
+TEXT_PT = 3   # text offset above bracket line (display points)
+
+for i_sv, sv in enumerate(pivot.index):
+    pairs = all_pairs.get(sv, [])
+    if not pairs:
+        continue
+    y_base = max(pivot.loc[sv, g] for g in group_order)
+    bracket_offset = 0.0
+
+    for idx1, idx2, star in pairs:
+        ax = ax_bottom if (need_broken and y_base <= low_max) else ax_top
+        trans = ax.transData
+        inv = ax.transData.inverted()
+
+        _, y_disp = trans.transform((0, y_base))
+        y_hat_disp = y_disp + LEG_PT + bracket_offset
+        y_text_disp = y_hat_disp + TEXT_PT
+        _, y_hat = inv.transform((0, y_hat_disp))
+        _, y_text = inv.transform((0, y_text_disp))
+
+        x1 = x[i_sv] + offsets[idx1]
+        x2 = x[i_sv] + offsets[idx2]
+
+        is_sig = star != "ns"
+        fs = 12 if is_sig else 9
+        fw = "bold" if is_sig else "normal"
+
+        # Single polyline: left tick → left top → right top → right tick
+        tick_x = bar_width * 0.25
+        _, y_tick = inv.transform((0, y_hat_disp - tick_depth))
+
+        ax.plot(
+            [x1 - tick_x, x1, x2, x2 + tick_x],
+            [y_tick, y_hat, y_hat, y_tick],
+            lw=bracket_lw, c="black",
+        )
+
+        ax.text((x1 + x2) / 2, y_text, star,
+                ha="center", va="bottom",
+                fontsize=fs, fontweight=fw, color="black")
+
+        bracket_offset += tick_depth + TEXT_PT + bracket_gap
+```
+
+Visual result:
+```
+   \──────────/     \──────/
+     ****              ns
+  [bar1] [bar2]   [bar3] [bar4]
+```
+
+### Bracket Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `bracket_gap` | 10.0 | Vertical gap (display pts) between stacked bracket units |
+| `tick_depth` | 6.0 | Depth of diagonal ticks (display pts). Larger = steeper |
+| `bracket_lw` | 0.8 | Line width — 0.8 is clean and publication-ready |
+| `use_broken_axis` | True | Enable broken axis; auto-disabled if data doesn't need it |
+| `test_method` | "chi2" | `"chi2"` or `"fisher"` (for small samples) |
+
+### Significance Bracket Pitfalls
+
+- **ns color MUST be same as stars (black)** — user explicitly rejected gray. Distinguish by fontsize (12 vs 9) and weight (bold vs normal) only.
+- **Diagonal ticks must be OUTWARD** — `\` goes down-LEFT from bar1, `/` goes down-RIGHT from bar2.
+- **Reset `bracket_offset` per SV type** — NOT globally. Each type's brackets start fresh from its own `y_base`.
+- **`bracket_offset` increment** — use `tick_depth + TEXT_PT + bracket_gap`, NOT `LEG_PT + TEXT_PT + bracket_gap`.
+- **Store ALL pairs including ns** — so every comparison gets a bracket annotation.
+- **Draw bracket as SINGLE POLYLINE** — never 3 separate `ax.plot()` calls (causes line-cap overlap at junctions).
+- **`bracket_lw` default 0.8** — thicker lines (1.2+) look heavy.
+
+## 9. Common Matplotlib API Pitfalls
+
+- **`ax.legend()` does NOT accept `alpha`** — use `framealpha` for legend box transparency. `alpha` is for plot elements (lines, bars), not the legend container.
+- **Title parameter pattern** — when adding optional `title: str = ""` to plotting functions, use conditional placement before `fig.tight_layout()`:
+
+```python
+if title:
+    ax.set_title(title, fontsize=12, fontweight="bold")
+fig.tight_layout()
+```
