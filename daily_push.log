@@ -1,1 +1,11 @@
 2026-06-11 09:19:55,856 [INFO] 第 1 次尝试推送...
+2026-06-11 09:20:14,589 [INFO] commit 成功: auto: 2026-06-11 09:20
+2026-06-11 09:20:16,639 [ERROR] git push 失败 (exit 128):
+stdout: 
+stderr: Permission denied (publickey).
+fatal: Could not read from remote repository.
+
+Please make sure you have the correct access rights
+and the repository exists.
+2026-06-11 09:20:16,639 [WARNING] 推送失败，等待 30 秒后重试...
+2026-06-11 09:20:46,639 [INFO] 第 2 次尝试推送...
