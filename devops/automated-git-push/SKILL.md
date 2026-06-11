@@ -18,6 +18,7 @@ Set up a Python script that performs `git add -A / commit / push`, scheduled via
 3. **Don't over-engineer config** — if the script runs inside the repo, there's no need for a `GIT_REPO_DIR` variable. Use `cwd` directly. Users will call this out as unnecessary.
 4. **Sleep loops are fragile** — a `while True` + `time.sleep()` approach dies on process exit or system restart. Prefer cron for scheduling; the script should run once and exit.
 5. **Manual + scheduled coexistence** — use `--push-now` flag for manual runs. Cron uses the same flag. The scheduled loop code path becomes dead code once cron is set up — clean it up or leave it but don't mix concerns.
+6. **Repository directory** — use `--repo-dir` to specify a different repository directory. Default is current directory (`.`).
 
 ## Script Pattern
 
@@ -88,14 +89,27 @@ def push_with_retry(msg=None, max_attempts=3):
     return False
 
 
-def main():
-    parser = argparse.ArgumentParser()
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Automated daily git push")
     parser.add_argument("--push-now", action="store_true", help="Push once and exit")
-    parser.add_argument("-m", "--message", type=str, help="Custom commit message")
-    args = parser.parse_args()
+    parser.add_argument("-m", "--message", type=str, default=None, help="Custom commit message (--push-now only)")
+    parser.add_argument("--repo-dir", type=str, default=".", help="Repository directory (default: current directory)")
+    return parser.parse_args()
+def main() -> None:
+    args = parse_args()
+
+    # Change to specified repo directory
+    repo_dir = Path(args.repo_dir).resolve()
+    if not repo_dir.is_dir():
+        log.error("Directory does not exist: %s", repo_dir)
+        sys.exit(1)
+    
+    import os
+    os.chdir(repo_dir)
+    log.info("Working directory: %s", repo_dir)
 
     if run_git("rev-parse", "--is-inside-work-tree").returncode != 0:
-        log.error("Not a git repo: %s", Path.cwd())
+        log.error("Not a git repo: %s", repo_dir)
         sys.exit(1)
 
     if args.push_now:
@@ -121,7 +135,7 @@ SCRIPT="/path/to/daily_git_push.py"
 
 cat << EOF | crontab -
 # Daily git push at 18:00
-0 18 * * * cd $REPO_DIR && /usr/bin/python $SCRIPT --push-now >> ${SCRIPT%/*}/daily_push_cron.log 2>&1
+0 18 * * * /usr/bin/python $SCRIPT --push-now --repo-dir $REPO_DIR >> ${SCRIPT%/*}/daily_push_cron.log 2>&1
 EOF
 
 # Verify
@@ -133,5 +147,7 @@ crontab -l
 - Script lives in the repo or elsewhere — cron `cd`s into the repo dir first
 - Two log files: `daily_push.log` (script's own), `daily_push_cron.log` (cron stdout/stderr)
 - Manual use: `python script.py --push-now` or `python script.py --push-now -m "msg"`
+- Specify repo directory: `python script.py --push-now --repo-dir /path/to/repo`
+- Default repo directory: current directory (`.`)
 - Retry: 3 attempts with 30s/60s/90s backoff
 - No external dependencies (stdlib only)

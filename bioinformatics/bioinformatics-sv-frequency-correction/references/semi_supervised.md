@@ -25,7 +25,7 @@ labeled_df, combined_df, feature_columns, no_scale_columns = load_combined_featu
 )
 ```
 - Calls `parser_table()` for BAM feature extraction (cached to `{outdir}/labeled/` and `{outdir}/unlabeled/`)
-- Filters `extra_keep_cols` against input TSV header before calling `parser_table()` (see SP6)
+- Filters `extra_keep_cols` against input TSV header before calling `parser_table()` (see SP7)
 - Combines labeled+unlabeled, runs `preprocess_features()` on merged matrix
 - Returns processed DataFrames + feature column lists
 - `extract_xy(df, feature_columns)` → `(X, y, index)` dropping NaN-label rows
@@ -118,6 +118,7 @@ must be fit on combined data, not labeled-only. Otherwise the scaler is biased
 by the small labeled distribution. `_data.py` handles this automatically.
 
 ### SP5: Grouped splits (`--group-cols`)
+
 All methods use GroupShuffleSplit to prevent data leakage — different measurements
 of the same ddPCR sample must not span train/test. The grouping columns are
 configurable via `--group-cols` (repeatable, `action="append"`). Default: `["原始编号"]`.
@@ -129,12 +130,19 @@ python self_training.py \
   --group-cols 原始编号 --group-cols FusionGene --group-cols FusionExon \
   --labeled-tsv ... -o ...
 ```
-Internally:
+
+**Use the shared `grouped_train_test_split()` from `_data.py`** instead of inline logic.
+It handles NaN groups (NaN rows → training set, not test), composite keys, and returns
+`train_groups` for passing to `_fit_model_with_cv()`:
+
 ```python
-available_groups = [c for c in group_cols if c in df.columns]
-groups = df[available_groups[0]].astype(str)
-for col in available_groups[1:]:
-    groups = groups + "__" + df[col].astype(str)
+from _data import grouped_train_test_split
+
+train_idx, test_idx, train_groups = grouped_train_test_split(
+    X=X_labeled, y=y_labeled, df=labeled_df.loc[labeled_idx],
+    group_cols=group_cols, test_size=test_size, random_state=random_state,
+)
+# train_groups: None if no group cols → falls back to KFold for CV
 ```
 
 ### SP6: `parser_table(outdir=...)` creates duplicate files
@@ -149,9 +157,10 @@ df.to_csv(cache_path, sep="\t", index=False)
 ```
 
 ### SP7: `parser_table()` crashes on missing `extra_keep_cols`
+
 `parser_table()` does `df = df[bam_columns + extra_keep_cols]` without checking
 column existence. When processing unlabeled data (no `ddPCR_AF` column), this
-raises `KeyError: "['ddPCR_AF'] not in index"`.
+raises `KeyError`.
 
 **Fix** (implemented in `_data.py`): Read input TSV header first, filter
 `extra_keep_cols` to only columns present in the file, then add missing columns
@@ -164,4 +173,96 @@ missing = [c for c in extra_keep_cols if c not in available]
 df = parser_table(infile=tsv_path, extra_keep_cols=valid_keep, ...)
 for col in missing:
     df[col] = np.nan
+```
+
+### SP8: `preprocess_features()` diagnostics dict missing `processed_feature_columns`
+
+The `diagnostics` dict returned by `preprocess_features()` does NOT contain the
+key `processed_feature_columns`. That key is only written to
+`preprocessing_metadata.json` on disk. Using `diagnostics.get()` silently returns
+`[]`, causing all numeric features to be lost (only sv_type one-hot survives).
+
+```python
+# WRONG — silently returns empty list
+features = diagnostics.get("processed_feature_columns", [])
+
+# RIGHT — read from the processed DataFrame directly
+non_feature = set(META_COLUMNS) | {"_is_labeled"}
+features = [c for c in combined_processed.columns
+            if c not in non_feature and pd.api.types.is_numeric_dtype(combined_processed[c])]
+```
+
+### SP9: `_fit_model_with_cv(groups=None)` — CV data leakage
+
+When using GroupShuffleSplit for train/test, the same groups must be passed to
+`_fit_model_with_cv()` for inner CV. Otherwise KFold is used and the same
+sample can appear in both train and validation folds during hyperparameter search.
+
+```python
+# Using grouped_train_test_split (recommended — handles NaN groups):
+train_idx, test_idx, train_groups = grouped_train_test_split(
+    X=X_labeled, y=y_labeled, df=labeled_df.loc[labeled_idx],
+    group_cols=group_cols, test_size=test_size, random_state=random_state,
+)
+model, params = _fit_model_with_cv(..., groups=train_groups, ...)
+```
+
+All three semi-supervised scripts had this bug (groups=None). Fixed by using
+`grouped_train_test_split()` which returns `train_groups` automatically.
+
+### SP10: All imports must be at module top level
+
+The user uses conda (not uv). Inline `from X import Y` inside functions provides
+no benefit and makes dependency tracking harder. Move all imports to the file header.
+Exception: `try/except` blocks for optional dependencies (e.g. PyTorch) are acceptable.
+
+### SP11: `--group-cols` uses `action="append"` not `nargs="+"`
+
+Per user preference, multi-value CLI args use `action="append"` (repeatable flag)
+rather than `nargs="+"` (space-separated list). This matches the pattern in train.py:
+```python
+parser.add_argument("--group-cols", action="append", default=None,
+                    help="Column(s) for grouped split (repeatable)")
+```
+
+### SP12: BAM extraction time on remote storage
+
+`parser_table()` opens each BAM file independently via pysam. When BAM files are on
+network-mounted storage (e.g. `/GeneCloud003/`, `/mnt/GenePlus005/`), each file open
+involves network I/O. With 22K+ rows and many unique BAM paths, extraction can take
+24+ hours. This is a one-time cost (cached afterward), but plan accordingly.
+
+### SP13: Do NOT run all 3 scripts concurrently
+
+Each script uses `n_jobs=-1` in GridSearchCV (~10 loky workers). Running all 3
+simultaneously creates 30+ processes fighting for CPU, causing severe contention.
+Run sequentially:
+```bash
+python self_training.py ... && \
+python semi_supervised_ae.py ... && \
+python consistency_reg.py ...
+```
+
+### SP14: Numpy fallback is NOT true consistency regularization
+
+The numpy fallback in `consistency_reg.py` (when PyTorch is unavailable) trains an
+ensemble of models on noise-perturbed features and averages predictions. This is
+effectively **bagging with noise injection**, not consistency regularization. True
+consistency regularization requires gradient-based loss computation
+(`MSE(pred(x), pred(x+noise))` in the backward pass), which only PyTorch mode provides.
+
+## File Structure
+
+```
+sv_freq_correction/
+├── features.py              # Feature extraction (parser_table) + preprocessing
+├── train.py                 # Baseline supervised training (ModelRegistry, 12 regressors)
+├── _data.py                 # Semi-supervised data loading + grouped_train_test_split()
+├── self_training.py         # Method 1: pseudo-label self-training
+├── semi_supervised_ae.py    # Method 2: denoising autoencoder
+├── consistency_reg.py       # Method 3: consistency regularization
+├── predict.py               # Prediction inference
+├── diagnose_split.py        # Train/test split diagnostics
+├── report_correlated.py     # Correlated feature report
+└── README.md                # Full documentation
 ```
