@@ -2,10 +2,7 @@
 
 ## Problem
 
-Matplotlib cannot render Chinese characters by default — they appear as empty
-boxes (□□□) or tofu. This is common in Chinese bioinformatics QC data where
-column headers and category labels are in Chinese (e.g., 项目/产品名称, 样本类型,
-石蜡包埋组织, Mapping rate(%)).
+Matplotlib cannot render Chinese characters by default — they appear as empty boxes (□□□) or tofu. This is common in Chinese bioinformatics QC data where column headers and category labels are in Chinese.
 
 ## Solution
 
@@ -43,8 +40,7 @@ def configure_chinese_font() -> str:
 ## Critical Pitfall: Must Call, Not Just Define
 
 **The function MUST be called inside every plotting function that needs Chinese text.**
-Simply defining it at module level or calling it once at startup does NOT work reliably
-because:
+Simply defining it at module level or calling it once at startup does NOT work reliably because:
 
 1. `matplotlib.use('Agg')` or other backend switches can reset rcParams
 2. `seaborn.set_style()` overrides `rcParams["font.sans-serif"]`
@@ -61,15 +57,10 @@ def my_plot_function(data, title, ...):
 
 ## Troubleshooting
 
-If Chinese still shows as boxes after configuration:
-
 1. **No CJK font installed:**
    ```bash
    # CentOS/RHEL
    yum install -y google-noto-sans-cjk-sc-fonts
-   # or
-   yum install -y wqy-microhei-fonts
-
    # Ubuntu/Debian
    apt install -y fonts-noto-cjk
    ```
@@ -87,31 +78,8 @@ If Chinese still shows as boxes after configuration:
    plt.rcParams["font.sans-serif"] = ["Noto Sans CJK SC"]
    ```
 
-## Integration Pattern
-
-When building analysis modules that auto-generate plots (like `prepare_data()`),
-import and call the font config in the plotting module, not the data module:
-
-```python
-# plot_comparison.py
-from matplotlib import font_manager
-import matplotlib.pyplot as plt
-
-def configure_chinese_font() -> str:
-    # ... as above ...
-
-def plot_comparison(result, ...):
-    configure_chinese_font()  # called here
-    # ... plotting code ...
-
-def plot_violin(result, ...):
-    configure_chinese_font()  # and here
-    # ... plotting code ...
-```
-
 ## Font Priority Order
 
-The candidate list is ordered by preference:
 1. Noto Sans CJK SC — best quality, wide coverage
 2. Source Han Sans SC — Adobe's version of Noto
 3. WenQuanYi Micro Hei — common on Linux

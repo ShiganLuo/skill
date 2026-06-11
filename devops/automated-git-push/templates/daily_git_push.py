@@ -5,6 +5,7 @@ Usage:
   python daily_git_push.py              # scheduled mode (requires cron)
   python daily_git_push.py --push-now   # immediate push once
   python daily_git_push.py --push-now -m "fix: xxx"  # custom commit message
+  python daily_git_push.py --push-now --repo-dir /path/to/repo  # specify repo directory
 """
 
 import argparse
@@ -87,14 +88,25 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Automated daily git push")
     parser.add_argument("--push-now", action="store_true", help="Push once and exit")
     parser.add_argument("-m", "--message", type=str, default=None, help="Custom commit message (--push-now only)")
+    parser.add_argument("--repo-dir", type=str, default=".", help="Repository directory (default: current directory)")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
 
+    # Change to specified repo directory
+    repo_dir = Path(args.repo_dir).resolve()
+    if not repo_dir.is_dir():
+        log.error("Directory does not exist: %s", repo_dir)
+        sys.exit(1)
+    
+    import os
+    os.chdir(repo_dir)
+    log.info("Working directory: %s", repo_dir)
+
     if run_git("rev-parse", "--is-inside-work-tree").returncode != 0:
-        log.error("Not a git repo: %s", Path.cwd())
+        log.error("Not a git repo: %s", repo_dir)
         sys.exit(1)
 
     if args.push_now:
