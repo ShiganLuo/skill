@@ -95,6 +95,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("-m", "--message", type=str, default=None, help="Custom commit message (--push-now only)")
     parser.add_argument("--repo-dir", type=str, default=".", help="Repository directory (default: current directory)")
     return parser.parse_args()
+
+
 def main() -> None:
     args = parse_args()
 

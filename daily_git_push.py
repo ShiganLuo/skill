@@ -4,6 +4,7 @@
 用法:
   python daily_git_push.py              # 立即推送
   python daily_git_push.py -m "fix: xxx"  # 自定义 commit message
+  python daily_git_push.py --repo-dir /path/to/repo  # 指定仓库目录
 """
 
 import argparse
@@ -100,11 +101,22 @@ def push_with_retry(msg: str | None = None, max_attempts: int = 3) -> bool:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="git add + commit + push")
     parser.add_argument("-m", "--message", type=str, default=None, help="自定义 commit message")
+    parser.add_argument("--repo-dir", type=str, default=".", help="仓库目录（默认: 当前目录）")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+
+    # 切换到指定仓库目录
+    repo_dir = Path(args.repo_dir).resolve()
+    if not repo_dir.is_dir():
+        log.error("目录不存在: %s", repo_dir)
+        sys.exit(1)
+
+    import os
+    os.chdir(repo_dir)
+    log.info("工作目录: %s", repo_dir)
 
     # 验证是否为 git 仓库
     r = run_git("rev-parse", "--is-inside-work-tree")
