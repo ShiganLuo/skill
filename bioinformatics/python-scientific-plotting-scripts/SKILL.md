@@ -372,7 +372,99 @@ Visual result:
 - **Draw bracket as SINGLE POLYLINE** — never 3 separate `ax.plot()` calls (causes line-cap overlap at junctions).
 - **`bracket_lw` default 0.8** — thicker lines (1.2+) look heavy.
 
-## 9. Common Matplotlib API Pitfalls
+## 9. Vertical Reference Lines with Threshold Annotations
+
+When drawing vertical reference lines (e.g. threshold depth markers) with `ax.vlines()`, the threshold value must be clearly visible without colliding with x-axis tick labels.
+
+### Correct pattern: clean ticks + always-on leader line annotation
+
+**Never** add threshold values to x-axis tick labels. Keep x-axis ticks clean (base positions only). Use `ax.annotate` with a leader line below the x-axis to show every threshold value:
+
+```python
+# Draw full-length vertical line (y_bottom to target)
+ax.vlines(threshold_x, y_bottom, target_y,
+          colors=["red"], linestyles="dashed",
+          label=f"threshold={value:.2f}")
+ax.scatter([threshold_x], [target_y], color="red", s=26, zorder=4)
+
+# Leader line: ALWAYS show threshold value below x-axis
+ax.annotate(
+    f"{threshold_x:.0f}x",
+    xy=(threshold_x, y_bottom),       # anchor at line bottom
+    xytext=(8, -28),                   # offset in display points
+    textcoords="offset points",
+    ha="left", va="top", fontsize=8, fontweight="bold", color="red",
+    arrowprops=dict(arrowstyle="-", color="red", lw=0.8,
+                    connectionstyle="angle,angleA=-90,angleB=180,rad=0.2"),
+    bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="red", lw=0.5, alpha=0.9),
+)
+```
+
+### Multiple curves: same pattern, per-curve colors
+
+```python
+for idx, x_threshold in enumerate(warped_threshold_x):
+    ax.vlines(x_threshold, y_bottom, sensitivity_threshold,
+              colors=[threshold_colors[idx]], linestyles="dashed", alpha=0.85)
+    ax.scatter([x_threshold], [sensitivity_threshold],
+               color=threshold_colors[idx], s=24, zorder=4)
+    ax.annotate(
+        f"{threshold_x_values[idx]:.0f}x",
+        xy=(x_threshold, y_bottom), xytext=(8, -28),
+        textcoords="offset points",
+        ha="left", va="top", fontsize=8, fontweight="bold",
+        color=threshold_colors[idx],
+        arrowprops=dict(arrowstyle="-", color=threshold_colors[idx], lw=0.8,
+                        connectionstyle="angle,angleA=-90,angleB=180,rad=0.2"),
+        bbox=dict(boxstyle="round,pad=0.15", fc="white",
+                  ec=threshold_colors[idx], lw=0.5, alpha=0.9),
+    )
+```
+
+### Raw scatter + smoothed curve + method annotation
+
+Always show raw data points alongside the smoothed curve, and annotate the fitting method:
+
+```python
+ax.scatter(x_raw, y_raw, color="#1f77b4", alpha=0.85, label="Raw points")
+ax.plot(x_smooth, y_smooth, color="#ff7f0e", linewidth=2.2,
+        label=f"Smoothed curve ({method})")
+
+# Method annotation — bottom-right corner
+if method != "none":
+    ax.text(0.98, 0.02, f"fit: {method}", transform=ax.transAxes,
+            ha="right", va="bottom", fontsize=8, color="gray",
+            style="italic", alpha=0.7)
+```
+
+For multiple curves, use per-curve colors for scatter:
+
+```python
+ax.scatter(map_x(x_raw), y_raw, color=color, alpha=0.25, s=20)  # raw
+ax.plot(map_x(x_smooth), y_smooth, color=color, linewidth=2.2)  # smoothed
+```
+
+### Threshold label naming
+
+Use `"threshold"` not `"Sensitivity threshold"` — shorter, cleaner:
+
+```python
+# vlines legend label
+label=f"threshold={value:.2f}"
+# horizontal reference line legend label
+label=f"threshold = {value:.2f}"
+```
+
+### Pitfalls
+
+- **Anti-pattern: add threshold to x-ticks** — causes tick label to sit directly on the dashed vertical line. Even hiding the label with `""` leaves a tick mark that clutters the axis. Never add threshold values to `ax.set_xticks()`.
+- **Anti-pattern: shorten the vertical line + text below axis** — visually ugly, rejected by user. Never use `y_line_bottom = y_bottom + 0.06 * y_range` + `ax.text()` below the axis.
+- **Anti-pattern: conditional leader line only on overlap** — if you only show leader lines when threshold is close to an existing tick, thresholds far from any tick have NO visible value at all. Always show the leader line.
+- **Keep consistent styling across related functions** — when you have a single-item and multi-item variant of the same plot, they must share: `ax.grid(alpha=0.3, linestyle="--")`, same vlines/scatter/leader-line style, same method annotation. Don't let the multi variant drift into a different visual language.
+- **Leader line `xytext=(8, -28)` offset** — empirically good for most figure sizes. `(4, -22)` is too tight; `(8, -28)` gives enough clearance from the axis.
+- **Multiple curves with warped x-axis** — when using x-axis warping (e.g. steep-region emphasis), the leader line anchor uses `warped_threshold_x` (display position), but the label text uses `threshold_x_values` (actual depth value).
+
+## 10. Common Matplotlib API Pitfalls
 
 - **`ax.legend()` does NOT accept `alpha`** — use `framealpha` for legend box transparency. `alpha` is for plot elements (lines, bars), not the legend container.
 - **Title parameter pattern** — when adding optional `title: str = ""` to plotting functions, use conditional placement before `fig.tight_layout()`:
