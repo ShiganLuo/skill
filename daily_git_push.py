@@ -100,6 +100,7 @@ def push_with_retry(msg: str | None = None, max_attempts: int = 3) -> bool:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="git add + commit + push")
+    parser.add_argument("--push-now", action="store_true", help="立即推送并退出")
     parser.add_argument("-m", "--message", type=str, default=None, help="自定义 commit message")
     parser.add_argument("--repo-dir", type=str, default=".", help="仓库目录（默认: 当前目录）")
     return parser.parse_args()
@@ -124,8 +125,14 @@ def main() -> None:
         log.error("目录不是 git 仓库: %s", Path.cwd())
         sys.exit(1)
 
-    success = push_with_retry(msg=args.message)
-    sys.exit(0 if success else 1)
+    if args.push_now:
+        log.info("手动推送模式")
+        success = push_with_retry(msg=args.message)
+        sys.exit(0 if success else 1)
+
+    # 没有 --push-now 参数时，提示使用 cron 调度
+    log.warning("未使用 --push-now 参数。请使用 cron 进行定时调度，而不是直接运行此脚本。")
+    sys.exit(0)
 
 
 if __name__ == "__main__":
