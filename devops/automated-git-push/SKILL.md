@@ -153,3 +153,52 @@ crontab -l
 - Default repo directory: current directory (`.`)
 - Retry: 3 attempts with 30s/60s/90s backoff
 - No external dependencies (stdlib only)
+
+## 中文使用说明
+
+### 脚本位置
+- 主脚本: `daily_git_push.py`（中文版，已添加所有参数）
+- 模板: `devops/automated-git-push/templates/daily_git_push.py`（英文版）
+
+### 使用方法
+```bash
+# 立即推送
+python daily_git_push.py --push-now
+
+# 自定义 commit message
+python daily_git_push.py --push-now -m "fix: 修复xxx问题"
+
+# 指定仓库目录
+python daily_git_push.py --push-now --repo-dir /path/to/repo
+
+# 组合使用
+python daily_git_push.py --push-now -m "更新文档" --repo-dir /path/to/repo
+```
+
+### 定期执行设置
+```bash
+# 检查 crontab 是否可用
+which crontab && crontab -l
+
+# 设置每天 18:00 自动推送
+REPO_DIR="/path/to/your/repo"
+SCRIPT="/path/to/daily_git_push.py"
+
+cat << EOF | crontab -
+# 每天 18:00 自动 git push
+0 18 * * * /usr/bin/python3 $SCRIPT --push-now --repo-dir $REPO_DIR >> ${SCRIPT%/*}/daily_push_cron.log 2>&1
+EOF
+
+# 验证设置
+crontab -l
+```
+
+### 日志文件
+- `daily_push.log`: 脚本自身的日志（在仓库目录下）
+- `daily_push_cron.log`: cron 执行日志（在脚本目录下）
+
+### 注意事项
+1. 脚本会自动重试 3 次，每次间隔 30/60/90 秒
+2. 如果没有变更，脚本会跳过提交
+3. 使用 `--push-now` 参数才会实际执行推送
+4. 不带参数运行会提示使用 cron 调度

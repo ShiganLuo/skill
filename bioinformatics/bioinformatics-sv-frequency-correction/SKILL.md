@@ -91,7 +91,8 @@ cache across multiple scripts (see `references/semi_supervised.md` SP7).
 - Autoencoder uses denoising (Gaussian noise → reconstruct clean) for robustness
 - Consistency regularization: PyTorch mode for gradient-level λ*con_loss; numpy fallback uses ensemble agreement
 - All methods compare against a labeled-only baseline using the same train/test split
-- Grouped train/test split via `--group-cols` (default `["原始编号"]`, repeatable for composite keys)
+- Grouped train/test split via `--group-cols` (default, repeatable for composite keys)
+- **Hyperparameter search**: `_fit_model_with_cv` uses `RandomizedSearchCV(n_iter=50)` for large grids (>50 combos), falling back to `GridSearchCV` for small grids. Default param grids are kept lean to avoid combinatorial explosion. See `references/semi_supervised.md` SP15.
 
 ## Key Functions
 
