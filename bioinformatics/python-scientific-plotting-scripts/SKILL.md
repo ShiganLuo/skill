@@ -120,7 +120,25 @@ def Deseq2_oncoprint_data(
 
 This eliminates length-mismatch errors and makes the interface self-documenting.
 
-## 3. Typing Conventions
+## 3. Import Style
+
+All imports at the top of the file, grouped: stdlib → third-party → local. **Never use inline or function-level imports** except try/except guards for optional dependencies. Moving `import colorsys` or `import os` inside a function "just because it's only used there" is rejected — put it at the top.
+
+```python
+# Good — all at top
+import os
+import colorsys
+import numpy as np
+from scipy.interpolate import PchipInterpolator
+import matplotlib.pyplot as plt
+
+# Bad — inline import inside function
+def my_func():
+    import colorsys  # NO — move to top
+    ...
+```
+
+## 4. Typing Conventions
 
 Use modern type hints with full parameterization:
 
@@ -134,7 +152,7 @@ def run(group_vcf: dict, image_formats: list = None):
 
 Import from `typing`: `Dict`, `List`, `Optional`, `Literal`, `Tuple`, `Union`.
 
-## 4. NumPy Docstring Style
+## 5. NumPy Docstring Style
 
 Every function must have a NumPy-style docstring. Template:
 
@@ -169,7 +187,7 @@ def my_func(param1: str, param2: int = 10) -> pd.DataFrame:
 - **Docstring placement** — the `"""` block must be the FIRST statement after `def`. If-checks for default args go AFTER the docstring, not before.
 - **Batch docstring addition** — use `delegate_task` with 2-3 parallel subagents for projects with 10+ functions across multiple files.
 
-## 5. Graceful Statistical Testing
+## 6. Graceful Statistical Testing
 
 When using `chi2_contingency` on contingency tables that may have zeros:
 
@@ -184,7 +202,7 @@ except ValueError:
     return None
 ```
 
-## 6. Parallel Plotting (ProcessPoolExecutor)
+## 7. Parallel Plotting (ProcessPoolExecutor)
 
 When a CLI tool plots multiple genes/samples/regions, parallelism speeds things up — but **only with processes, never threads**.
 
@@ -216,7 +234,7 @@ with concurrent.futures.ProcessPoolExecutor(max_workers=args.threads) as executo
 - **Don't exceed CPU core count** — `max_workers` > cores causes process thrashing.
 - **Parameter is named `--threads` for CLI consistency** (matches other scripts), but the implementation uses `ProcessPoolExecutor`. This is intentional — the user-facing concept is "parallelism level", not the implementation detail.
 
-## 7. Multi-Value Gene/Item Arguments
+## 8. Multi-Value Gene/Item Arguments
 
 When a CLI needs to accept multiple genes, samples, or items:
 
@@ -234,7 +252,7 @@ for gene_name in args.genes:
 
 **Never** use `nargs="+"` for this — `action="append"` is more explicit and matches the `-f`/`--format` pattern used across the project.
 
-## 8. Multi-Group Comparison Plots & Significance Brackets
+## 9. Multi-Group Comparison Plots & Significance Brackets
 
 ### Grouped Bar Chart Layout
 
@@ -372,7 +390,7 @@ Visual result:
 - **Draw bracket as SINGLE POLYLINE** — never 3 separate `ax.plot()` calls (causes line-cap overlap at junctions).
 - **`bracket_lw` default 0.8** — thicker lines (1.2+) look heavy.
 
-## 9. Vertical Reference Lines with Threshold Annotations
+## 10. Vertical Reference Lines with Threshold Annotations
 
 When drawing vertical reference lines (e.g. threshold depth markers) with `ax.vlines()`, the threshold value must be clearly visible without colliding with x-axis tick labels.
 
@@ -426,7 +444,7 @@ for idx, x_threshold in enumerate(warped_threshold_x):
 Always show raw data points alongside the smoothed curve, and annotate the fitting method:
 
 ```python
-ax.scatter(x_raw, y_raw, color="#1f77b4", alpha=0.85, label="Raw points")
+ax.scatter(x_raw, y_raw, color="#1f77b4", alpha=0.85, s=22, edgecolors="#1f77b4", linewidths=0.3, label="Raw points")
 ax.plot(x_smooth, y_smooth, color="#ff7f0e", linewidth=2.2,
         label=f"Smoothed curve ({method})")
 
@@ -440,7 +458,7 @@ if method != "none":
 For multiple curves, use per-curve colors for scatter:
 
 ```python
-ax.scatter(map_x(x_raw), y_raw, color=color, alpha=0.25, s=20)  # raw
+ax.scatter(map_x(x_raw), y_raw, color=color, alpha=0.75, s=22, edgecolors=color, linewidths=0.3)  # solid raw points
 ax.plot(map_x(x_smooth), y_smooth, color=color, linewidth=2.2)  # smoothed
 ```
 
@@ -463,8 +481,43 @@ label=f"threshold = {value:.2f}"
 - **Keep consistent styling across related functions** — when you have a single-item and multi-item variant of the same plot, they must share: `ax.grid(alpha=0.3, linestyle="--")`, same vlines/scatter/leader-line style, same method annotation. Don't let the multi variant drift into a different visual language.
 - **Leader line `xytext=(8, -28)` offset** — empirically good for most figure sizes. `(4, -22)` is too tight; `(8, -28)` gives enough clearance from the axis.
 - **Multiple curves with warped x-axis** — when using x-axis warping (e.g. steep-region emphasis), the leader line anchor uses `warped_threshold_x` (display position), but the label text uses `threshold_x_values` (actual depth value).
+- **Hide reference line legend entries** — use `label="_nolegend_"` on `axhline`/`axvline` that should be visible but excluded from the legend (e.g. threshold or ceiling lines that clutter the legend box). **Both lines MUST use identical style** (same linestyle, linewidth, alpha) so neither visually dominates:
 
-## 10. Common Matplotlib API Pitfalls
+```python
+# threshold and ceiling lines: SAME style, nolegend
+ax.axhline(sensitivity_threshold, color="gray", linestyle=":", linewidth=1.1, alpha=0.9, label="_nolegend_")
+ax.axhline(1.0,             color="gray", linestyle=":", linewidth=1.1, alpha=0.9, label="_nolegend_")
+```
+- **Y-axis tick filtering clips ceiling value** — when filtering y-ticks to a range like `yticks <= 1.0`, the `1.0` tick is always excluded by floating-point comparison. Fix: (a) explicitly append both threshold AND `1.0` to yticks, (b) use `<= 1.05` upper bound:
+
+```python
+yticks = np.asarray(ax.get_yticks(), dtype=float)
+yticks = np.unique(np.append(yticks, [sensitivity_threshold, 1.0]))
+ytick_candidates = np.sort(yticks[(yticks >= y_bottom) & (yticks <= 1.05)])
+ax.set_yticks(ytick_candidates)
+```
+- **x-axis label pushed down by leader-line annotations** — when leader lines sit below the x-axis (offset `(8, -28)`), the default x-axis label overlaps them. Add `labelpad=12` to `set_xlabel` to create clearance:
+
+```python
+ax.set_xlabel(x_label, labelpad=12)
+```
+
+## 11. Curve Smoothing for Asymptotic Data
+
+When plotting curves that saturate near a ceiling (e.g. sensitivity→1.0), pchip can produce visible plateaus. Use the `log(1-y)` asymptotic transform instead: `references/asymptotic-smoothing.md`.
+
+```python
+# Asymptotic method: log(1-y) transform + pchip + inverse
+eps = 1e-10
+y_clamped = np.clip(y, eps, 1.0 - eps)
+z = -np.log(1.0 - y_clamped)
+z_new = PchipInterpolator(x, z)(x_new)
+y_new = np.clip(1.0 - np.exp(-z_new), 0.0, 1.0)
+```
+
+Also applies to dose-response curves (→Emax), growth curves (→carrying capacity), any monotone curve with a known ceiling.
+
+## 12. Common Matplotlib API Pitfalls
 
 - **`ax.legend()` does NOT accept `alpha`** — use `framealpha` for legend box transparency. `alpha` is for plot elements (lines, bars), not the legend container.
 - **Title parameter pattern** — when adding optional `title: str = ""` to plotting functions, use conditional placement before `fig.tight_layout()`:

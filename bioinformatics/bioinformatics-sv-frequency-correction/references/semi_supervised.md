@@ -243,6 +243,60 @@ python semi_supervised_ae.py ... && \
 python consistency_reg.py ...
 ```
 
+### SP15: GridSearchCV param grid explosion → use RandomizedSearchCV
+
+`train.py` defines default param grids for each model. The `gradient_boosting` grid
+originally had 864,000 combinations (6×8×8×5×5×5×6×3). With 10-fold GroupKFold CV,
+that's **8.64 million model fits** — taking days to complete. `random_forest` and
+`extra_trees` had 176,400 combinations each.
+
+**Root cause**: Exhaustive `GridSearchCV` tries every combination. Tree ensemble grids
+with many axes (n_estimators, max_depth, learning_rate, subsample, min_samples_split,
+min_samples_leaf, max_features, loss) explode combinatorially.
+
+**Fix** (implemented in `_fit_model_with_cv`):
+
+1. **Use `RandomizedSearchCV` for large grids.** Added `n_iter=50` parameter.
+   The function auto-detects: if `product(len(v) for v in param_grid.values()) <= n_iter`,
+   use GridSearchCV (small grid); otherwise use RandomizedSearchCV (sample 50 combos).
+
+2. **Reduce grid dimensionality.** Removed extreme/unhelpful values:
+   - `n_estimators`: drop 800, 1000 (diminishing returns, very slow)
+   - `max_depth`: drop 2, 8, 10 (2 too shallow, 8+ rarely helps for small data)
+   - `learning_rate`: drop 0.001, 0.005, 0.15, 0.3 (extreme ends)
+   - `loss`: drop `absolute_error` (extremely slow per fit)
+   - `max_leaf_nodes`: removed entirely (rarely helps with max_depth set)
+
+3. **Result**: gradient_boosting grid reduced from 864K → 19,200 combos.
+   With `RandomizedSearchCV(n_iter=50)`, only 50×10=500 model fits instead of 8.64M.
+   **Speedup: ~17,000x for the CV step.** All three semi-supervised scripts benefit
+   automatically since they all call `_fit_model_with_cv`.
+
+Reduced grids (post-optimization):
+```python
+# gradient_boosting: 19,200 combos → RandomizedSearchCV samples 50
+{
+    "n_estimators": [100, 200, 300, 500],
+    "max_depth": [3, 4, 5, 6, 7],
+    "learning_rate": [0.01, 0.05, 0.1, 0.2],
+    "subsample": [0.7, 0.8, 0.9, 1.0],
+    "min_samples_split": [2, 5, 10],
+    "min_samples_leaf": [1, 3, 5],
+    "max_features": ["sqrt", "log2", None, 0.5],
+    "loss": ["squared_error", "huber"],
+}
+
+# random_forest / extra_trees: 5,760 combos → RandomizedSearchCV samples 50
+{
+    "n_estimators": [100, 200, 300, 500],
+    "max_depth": [5, 10, 15, None],
+    "min_samples_split": [2, 5, 10],
+    "min_samples_leaf": [1, 2, 5],
+    "max_features": ["sqrt", "log2", None, 0.5],
+    "bootstrap": [True, False],
+}
+```
+
 ### SP14: Numpy fallback is NOT true consistency regularization
 
 The numpy fallback in `consistency_reg.py` (when PyTorch is unavailable) trains an

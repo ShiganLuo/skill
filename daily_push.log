@@ -1,25 +1,5 @@
-2026-06-11 09:19:55,856 [INFO] 第 1 次尝试推送...
-2026-06-11 09:20:14,589 [INFO] commit 成功: auto: 2026-06-11 09:20
-2026-06-11 09:20:16,639 [ERROR] git push 失败 (exit 128):
-stdout: 
-stderr: Permission denied (publickey).
-fatal: Could not read from remote repository.
-
-Please make sure you have the correct access rights
-and the repository exists.
-2026-06-11 09:20:16,639 [WARNING] 推送失败，等待 30 秒后重试...
-2026-06-11 09:20:46,639 [INFO] 第 2 次尝试推送...
-2026-06-11 09:20:52,642 [INFO] commit 成功: auto: 2026-06-11 09:20
-2026-06-11 09:20:54,681 [ERROR] git push 失败 (exit 128):
-stdout: 
-stderr: Permission denied (publickey).
-fatal: Could not read from remote repository.
-
-Please make sure you have the correct access rights
-and the repository exists.
-2026-06-11 09:20:54,681 [WARNING] 推送失败，等待 60 秒后重试...
-2026-06-11 09:23:56,975 [INFO] 第 1 次尝试推送...
-2026-06-11 09:24:03,077 [INFO] commit 成功: auto: 2026-06-11 09:24
-2026-06-11 09:24:16,823 [INFO] push 成功 ✓
-2026-06-12 09:09:07,209 [INFO] 工作目录: /mnt/GenePlus002/genecloud/Org_terminal/org_52/terminal/luoshg_15179660974/.hermes/skills
-2026-06-12 09:09:07,252 [INFO] 第 1 次尝试推送...
+2026-06-15 09:39:28,778 [INFO] 工作目录: /mnt/GenePlus002/genecloud/Org_terminal/org_52/terminal/luoshg_15179660974/.hermes/skills
+2026-06-15 09:39:28,800 [WARNING] 未使用 --push-now 参数。请使用 cron 进行定时调度，而不是直接运行此脚本。
+2026-06-15 09:39:38,134 [INFO] 工作目录: /mnt/GenePlus002/genecloud/Org_terminal/org_52/terminal/luoshg_15179660974/.hermes/skills
+2026-06-15 09:39:38,141 [INFO] 手动推送模式
+2026-06-15 09:39:38,141 [INFO] 第 1 次尝试推送...

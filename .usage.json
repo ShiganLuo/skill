@@ -3,10 +3,10 @@
     "archived_at": null,
     "created_at": "2026-06-08T02:17:05.197289+00:00",
     "created_by": "agent",
-    "last_patched_at": "2026-06-11T01:33:16.908776+00:00",
+    "last_patched_at": "2026-06-12T01:16:36.130996+00:00",
     "last_used_at": "2026-06-11T01:29:14.338213+00:00",
     "last_viewed_at": "2026-06-11T01:29:14.300712+00:00",
-    "patch_count": 11,
+    "patch_count": 12,
     "pinned": false,
     "state": "active",
     "use_count": 11,
@@ -30,26 +30,26 @@
     "created_at": "2026-06-10T09:56:22.758491+00:00",
     "created_by": "agent",
     "last_patched_at": "2026-06-10T09:58:23.099599+00:00",
-    "last_used_at": "2026-06-10T09:58:34.416229+00:00",
-    "last_viewed_at": "2026-06-10T09:58:34.380286+00:00",
+    "last_used_at": "2026-06-12T03:10:26.542970+00:00",
+    "last_viewed_at": "2026-06-12T03:10:26.502661+00:00",
     "patch_count": 4,
     "pinned": false,
     "state": "active",
-    "use_count": 1,
-    "view_count": 1
+    "use_count": 2,
+    "view_count": 2
   },
   "bioinformatics-sv-frequency-correction": {
     "archived_at": null,
     "created_at": "2026-06-08T02:30:38.019583+00:00",
     "created_by": null,
-    "last_patched_at": "2026-06-09T09:38:55.844538+00:00",
-    "last_used_at": "2026-06-09T09:36:34.398428+00:00",
-    "last_viewed_at": "2026-06-09T09:36:34.349021+00:00",
-    "patch_count": 30,
+    "last_patched_at": "2026-06-12T04:03:46.059651+00:00",
+    "last_used_at": "2026-06-12T04:02:22.168577+00:00",
+    "last_viewed_at": "2026-06-12T04:02:22.107536+00:00",
+    "patch_count": 32,
     "pinned": false,
     "state": "active",
-    "use_count": 23,
-    "view_count": 23
+    "use_count": 25,
+    "view_count": 25
   },
   "cnc-sta-report-merger": {
     "archived_at": null,
@@ -103,6 +103,19 @@
     "use_count": 0,
     "view_count": 0
   },
+  "genomic-interval-filtering": {
+    "archived_at": null,
+    "created_at": "2026-06-12T03:11:39.965484+00:00",
+    "created_by": "agent",
+    "last_patched_at": "2026-06-12T03:12:17.638520+00:00",
+    "last_used_at": null,
+    "last_viewed_at": null,
+    "patch_count": 1,
+    "pinned": false,
+    "state": "active",
+    "use_count": 0,
+    "view_count": 0
+  },
   "hermes-multi-server": {
     "archived_at": null,
     "created_at": "2026-06-08T02:32:53.679137+00:00",
@@ -120,13 +133,13 @@
     "archived_at": null,
     "created_at": "2026-06-06T14:47:03.979071+00:00",
     "created_by": "agent",
-    "last_patched_at": "2026-06-11T07:04:06.787743+00:00",
-    "last_used_at": "2026-06-12T01:08:57.604762+00:00",
-    "last_viewed_at": "2026-06-12T01:08:57.568052+00:00",
-    "patch_count": 15,
+    "last_patched_at": "2026-06-12T01:56:18.673597+00:00",
+    "last_used_at": "2026-06-12T01:56:31.442162+00:00",
+    "last_viewed_at": "2026-06-12T01:56:31.275449+00:00",
+    "patch_count": 32,
     "pinned": false,
     "state": "active",
-    "use_count": 15,
-    "view_count": 15
+    "use_count": 22,
+    "view_count": 22
   }
 }
