@@ -264,6 +264,8 @@ model, params = _fit_model_with_cv(..., groups=train_groups, ...)
 
 ## Data Collection
 
+See `references/literature.md` for curated SV frequency correction literature (gnomAD SV, PGG.SV, benchmarking papers).
+
 ## Plotting Utilities
 
 `question.py` provides publication-quality plots: `single_violin_plot`, `single_bar_plot`,
