@@ -247,6 +247,105 @@ See `references/snakemake-workflow-detail.md` for full templates and the PacVar 
 
 ---
 
+## Coordinate Liftover (hg19↔hg38)
+
+Convert genomic coordinates between assemblies using `pyliftover` (pure Python, no external binary needed).
+
+### Key API Behavior
+
+`pyliftover.LiftOver.convert_coordinate(chrom, pos)` returns **single-point** results:
+```python
+# Returns: [(new_chrom, new_pos, strand, score), ...] or None
+result = lo.convert_coordinate('chr1', 69069)
+# [('chr1', 69069, '-', 20851231461)]
+```
+
+For BED intervals, convert start and end **separately**, then check they land on the same chromosome:
+```python
+def convert_interval(lo, chrom, start, end, output_chr_style=False):
+    chrom_lift = chrom if chrom.startswith('chr') else 'chr' + chrom
+    start_result = lo.convert_coordinate(chrom_lift, start)
+    end_result = lo.convert_coordinate(chrom_lift, end)
+    if not start_result or not end_result:
+        return None
+    new_chrom_s, new_start, _, _ = start_result[0]
+    new_chrom_e, new_end, _, _ = end_result[0]
+    if new_chrom_s != new_chrom_e:
+        return None
+    new_chrom = new_chrom_s
+    if output_chr_style:
+        if not new_chrom.startswith('chr'):
+            new_chrom = 'chr' + new_chrom
+    else:
+        if new_chrom.startswith('chr'):
+            new_chrom = new_chrom[3:]
+    return (new_chrom, int(new_start), int(new_end))
+```
+
+### Chain Files
+
+Download from UCSC:
+```bash
+wget http://hgdownload.soe.ucsc.edu/goldenPath/hg19/liftOver/hg19ToHg38.over.chain.gz
+```
+
+### Pitfalls
+
+- **Single-point API**: `convert_coordinate()` returns `(chrom, pos, strand, score)`, NOT `(chrom, start, end, strand)`. Common mistake: unpacking 4-tuple as interval.
+- **chr prefix**: Input must have `chr` prefix for UCSC chain files. `1` → `chr1` before calling.
+- **Coordinate style**: Add `--chr` flag to control output style (chr1 vs 1). Default: numeric style (no prefix).
+- **GLIBC version**: UCSC precompiled `liftOver` binary requires GLIBC 2.29+, often unavailable on CentOS 7. Use `pyliftover` instead: `pip install pyliftover`.
+
+---
+
+## GMT + GTF → BED Extraction
+
+Extract gene-level BED coordinates from a GMT gene set file and a GENCODE GTF annotation.
+
+### GMT Format
+
+Tab-separated: `geneset_name\turl\tgene1\tgene2\tgene3\t...`
+
+### Pattern
+
+```python
+import re
+
+def parse_gmt(gmt_path: str) -> set:
+    genes = set()
+    with open(gmt_path) as f:
+        for line in f:
+            fields = line.strip().split('\t')
+            if len(fields) >= 3:
+                genes.update(fields[2:])
+    return genes
+
+def parse_gtf_gene_coords(gtf_path: str) -> dict:
+    gene_coords = {}
+    name_pat = re.compile(r'gene_name "([^"]+)"')
+    with open(gtf_path) as f:
+        for line in f:
+            if line.startswith('#') or '\tgene\t' not in line:
+                continue
+            fields = line.split('\t')
+            chrom, start, end, strand = fields[0], int(fields[3])-1, int(fields[4]), fields[6]
+            m = name_pat.search(fields[8])
+            if m:
+                name = m.group(1)
+                if name not in gene_coords or (end-start) > (gene_coords[name][2]-gene_coords[name][1]):
+                    gene_coords[name] = (chrom, start, end, strand)
+    return gene_coords
+```
+
+### Pitfalls
+
+- GTF is **1-based**, BED is **0-based**: subtract 1 from GTF start coordinate.
+- Filter with `'\tgene\t'` in line (column 3) — don't parse transcript/exon records.
+- When multiple gene records exist (patch haplotypes), keep the longest span.
+- GMT may contain aliases not matching GTF `gene_name` — report unmatched genes for review.
+
+---
+
 ## Path Matching Utilities
 
 Two-phase matching pattern for resolving sample/task IDs to file paths: regex full component match first, substring fallback if no exact match. See `references/path-matching-utilities.md` for implementation templates and pitfalls.

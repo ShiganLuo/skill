@@ -49,7 +49,39 @@ parser.add_argument(
 - **String concatenation for multi-format** — use `os.path.splitext(out)[0]` to strip existing extension before appending format.
 - **output parameter semantics change** — when adding multi-format support to a function that previously took `output="gene_model.png"` (full path with extension), change it to `output="gene_model"` (base path without extension) and update all callers. The function loop appends `.{fmt}` internally. Don't forget CLI callers and batch `run()` functions.
 
-## 2. Optional Dependency Guard
+## 2. Container Environment Setup (Cromwell, Docker, Singularity)
+
+When scripts run inside workflow engines (Cromwell, Nextflow, Snakemake with `--use-singularity`), the home directory is often read-only. Matplotlib and fontconfig fail with:
+
+```
+mkdir -p failed for path /root/.config/matplotlib: [Errno 13] Permission denied
+Fontconfig error: No writable cache directories
+```
+
+**Fix — set env vars BEFORE any matplotlib import:**
+
+```python
+import os
+
+_tmp_cache = os.path.join(os.environ.get("TMPDIR", "/tmp"), "matplotlib_cache")
+os.environ.setdefault("MPLCONFIGDIR", _tmp_cache)
+os.makedirs(_tmp_cache, exist_ok=True)
+_font_cache = os.path.join(_tmp_cache, "fontconfig")
+os.environ.setdefault("FONTCONFIG_PATH", _font_cache)
+os.makedirs(_font_cache, exist_ok=True)
+
+# Now safe to import
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+```
+
+**Key rules:**
+- Use `os.environ.setdefault()` so callers can override via env var.
+- Use `TMPDIR` (set by most workflow engines) instead of hardcoding `/tmp`.
+- This block must come BEFORE `import matplotlib` — importing triggers the cache directory creation.
+
+## 3. Optional Dependency Guard
 
 When a script has optional dependencies (e.g. matplotlib), wrap the import in a try/except at the call site rather than at module level. This lets the core logic run even without plotting:
 
@@ -233,6 +265,65 @@ with concurrent.futures.ProcessPoolExecutor(max_workers=args.threads) as executo
 - **`create_db()` must be inside the worker function**, not in the parent process. Each process needs its own SQLite connection. The `.db` file is reused (not re-created) so concurrent `create_db` calls are safe.
 - **Don't exceed CPU core count** — `max_workers` > cores causes process thrashing.
 - **Parameter is named `--threads` for CLI consistency** (matches other scripts), but the implementation uses `ProcessPoolExecutor`. This is intentional — the user-facing concept is "parallelism level", not the implementation detail.
+
+### Pitfall: `os.fork()` OOM in Containers
+
+In memory-constrained containers (Cromwell, Kubernetes pods), `os.fork()` can fail with `OSError: [Errno 12] Cannot allocate memory`. The critical subtlety: **the error happens in a background thread** (`_handle_workers`), so `pool.map()` hangs forever instead of raising.
+
+**Fix — use `map_async` with timeout + sequential fallback:**
+
+```python
+import multiprocessing as mp
+from functools import partial
+
+process_func = partial(_process_one_file, chr_col=chr_col, pos_col=pos_col)
+results = None
+try:
+    pool = mp.Pool(n_workers)
+    try:
+        async_result = pool.map_async(process_func, file_list)
+        results = async_result.get(timeout=300)  # 5 min
+    finally:
+        pool.terminate()
+        pool.join()
+except Exception as e:
+    logger.warning(f"Multiprocessing failed ({type(e).__name__}: {e}), falling back to sequential")
+
+if results is None:
+    results = [process_func(fp) for fp in file_list]
+```
+
+**Why `map_async` instead of `map`:**
+- `pool.map()` blocks the main thread waiting for workers. If workers never started (fork OOM), it hangs forever.
+- `pool.map_async().get(timeout=...)` detects the hang and raises `multiprocessing.TimeoutError`.
+
+**Why catch broad `Exception`:** The failure mode varies — `OSError` for fork, `BrokenProcessPool` for dead workers, `TimeoutError` for hangs.
+
+## 9. Random Sampling for Large File Sets
+
+When processing many files (e.g. 66 samples) in memory-constrained environments, random sampling a subset reduces both execution time and peak memory.
+
+```python
+import random
+
+def load_data(
+    file_list: List[str],
+    n_sample_files: int = None,
+    seed: int = 42,
+) -> pd.DataFrame:
+    # Random sample before processing
+    if n_sample_files is not None and n_sample_files < len(file_list):
+        rng = random.Random(seed)
+        file_list = rng.sample(file_list, n_sample_files)
+        logger.info(f"Sampled {n_sample_files} files (seed={seed})")
+    ...
+```
+
+**Key rules:**
+- Use `random.Random(seed)` (instance) not `random.seed(seed)` (global state mutation).
+- Default `seed=42` for reproducibility across runs.
+- Guard with `n_sample_files < len(file_list)` — skip sampling if requesting more than available.
+- Update plot titles to reflect sampling: `f"DepFactor distribution (n={len(df)} sites, sampled 20/66 files)"`.
 
 ## 8. Multi-Value Gene/Item Arguments
 
