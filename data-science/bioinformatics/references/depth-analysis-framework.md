@@ -1,30 +1,3 @@
----
-name: bioinformatics-depth-analysis
-description: >
-  Analyze sequencing depth requirements for variant detection across clinical,
-  population, and research scenarios. Covers 6 statistical models (binomial,
-  beta-binomial, LOD/GATK-style, UMI-aware, population imputation, coverage
-  uniformity) and 5 scenarios (clinical somatic, liquid biopsy ctDNA, germline,
-  population low-depth, coverage uniformity). Use when computing minimum depth
-  for target power, sensitivity-vs-depth sweeps, or depth planning for NGS panels.
-tags:
-  - bioinformatics
-  - sequencing-depth
-  - variant-detection
-  - statistical-models
-  - power-analysis
-triggers:
-  - depth analysis
-  - minimum depth
-  - sequencing depth requirements
-  - detection sensitivity
-  - power analysis variant calling
-  - LOD score GATK
-  - imputation accuracy low depth
-  - UMI consensus detection
-  - coverage uniformity Poisson
----
-
 # Sequencing Depth Analysis Framework
 
 ## When to use
