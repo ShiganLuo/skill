@@ -4,39 +4,26 @@
     "created_at": "2026-06-08T02:17:05.197289+00:00",
     "created_by": "agent",
     "last_patched_at": "2026-06-12T01:16:36.130996+00:00",
-    "last_used_at": "2026-06-11T01:29:14.338213+00:00",
-    "last_viewed_at": "2026-06-11T01:29:14.300712+00:00",
+    "last_used_at": "2026-06-17T07:28:12.049201+00:00",
+    "last_viewed_at": "2026-06-17T07:28:12.007638+00:00",
     "patch_count": 12,
     "pinned": false,
     "state": "active",
-    "use_count": 11,
-    "view_count": 11
+    "use_count": 12,
+    "view_count": 12
   },
   "bioinformatics": {
     "archived_at": null,
     "created_at": "2026-06-02T07:24:01.196497+00:00",
     "created_by": "agent",
-    "last_patched_at": "2026-06-16T01:41:19.914838+00:00",
-    "last_used_at": "2026-06-16T01:40:28.810605+00:00",
-    "last_viewed_at": "2026-06-16T01:40:28.663860+00:00",
-    "patch_count": 16,
+    "last_patched_at": "2026-06-17T07:32:59.766986+00:00",
+    "last_used_at": "2026-06-17T07:28:11.990577+00:00",
+    "last_viewed_at": "2026-06-17T07:28:11.953001+00:00",
+    "patch_count": 23,
     "pinned": false,
     "state": "active",
-    "use_count": 4,
-    "view_count": 4
-  },
-  "bioinformatics-depth-analysis": {
-    "archived_at": null,
-    "created_at": "2026-06-10T09:56:22.758491+00:00",
-    "created_by": "agent",
-    "last_patched_at": "2026-06-10T09:58:23.099599+00:00",
-    "last_used_at": "2026-06-12T03:10:26.542970+00:00",
-    "last_viewed_at": "2026-06-12T03:10:26.502661+00:00",
-    "patch_count": 4,
-    "pinned": false,
-    "state": "active",
-    "use_count": 2,
-    "view_count": 2
+    "use_count": 5,
+    "view_count": 5
   },
   "bioinformatics-sv-frequency-correction": {
     "archived_at": null,
@@ -64,31 +51,18 @@
     "use_count": 1,
     "view_count": 1
   },
-  "cnv-analysis": {
-    "archived_at": null,
-    "created_at": "2026-06-11T07:29:56.237802+00:00",
-    "created_by": "agent",
-    "last_patched_at": "2026-06-11T08:32:53.617023+00:00",
-    "last_used_at": "2026-06-11T08:32:14.659821+00:00",
-    "last_viewed_at": "2026-06-11T08:32:14.621727+00:00",
-    "patch_count": 2,
-    "pinned": false,
-    "state": "active",
-    "use_count": 2,
-    "view_count": 2
-  },
   "codebase-refactoring": {
     "archived_at": null,
     "created_at": "2026-05-22T07:58:44.684872+00:00",
     "created_by": "agent",
     "last_patched_at": "2026-06-06T14:35:20.091492+00:00",
-    "last_used_at": "2026-06-09T06:53:56.424157+00:00",
-    "last_viewed_at": "2026-06-09T06:53:56.385883+00:00",
+    "last_used_at": "2026-06-17T07:28:13.125914+00:00",
+    "last_viewed_at": "2026-06-17T07:28:13.080430+00:00",
     "patch_count": 14,
     "pinned": false,
     "state": "active",
-    "use_count": 10,
-    "view_count": 10
+    "use_count": 11,
+    "view_count": 11
   },
   "gene-body-coverage": {
     "archived_at": null,
@@ -103,43 +77,17 @@
     "use_count": 0,
     "view_count": 0
   },
-  "genomic-interval-filtering": {
-    "archived_at": null,
-    "created_at": "2026-06-12T03:11:39.965484+00:00",
-    "created_by": "agent",
-    "last_patched_at": "2026-06-15T06:59:41.785400+00:00",
-    "last_used_at": "2026-06-16T01:49:43.649833+00:00",
-    "last_viewed_at": "2026-06-16T01:49:43.513368+00:00",
-    "patch_count": 21,
-    "pinned": false,
-    "state": "active",
-    "use_count": 11,
-    "view_count": 11
-  },
   "hermes-multi-server": {
     "archived_at": null,
     "created_at": "2026-06-08T02:32:53.679137+00:00",
     "created_by": "agent",
     "last_patched_at": null,
-    "last_used_at": "2026-06-09T06:54:00.263470+00:00",
-    "last_viewed_at": "2026-06-09T06:54:00.219961+00:00",
+    "last_used_at": "2026-06-17T07:28:13.100741+00:00",
+    "last_viewed_at": "2026-06-17T07:28:13.042601+00:00",
     "patch_count": 0,
     "pinned": false,
     "state": "active",
-    "use_count": 1,
-    "view_count": 1
-  },
-  "python-scientific-plotting-scripts": {
-    "archived_at": null,
-    "created_at": "2026-06-06T14:47:03.979071+00:00",
-    "created_by": "agent",
-    "last_patched_at": "2026-06-16T03:45:35.932063+00:00",
-    "last_used_at": "2026-06-16T03:46:04.792972+00:00",
-    "last_viewed_at": "2026-06-16T03:46:04.592691+00:00",
-    "patch_count": 35,
-    "pinned": false,
-    "state": "active",
-    "use_count": 24,
-    "view_count": 24
+    "use_count": 2,
+    "view_count": 2
   }
 }

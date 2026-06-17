@@ -1,9 +1,3 @@
----
-name: python-scientific-plotting-scripts
-description: Refactor and author Python scientific plotting scripts — multi-format output, proper typing, unified CLI, NumPy docstrings, graceful statistical testing, significance brackets (宝盖头 style). Use when creating or refactoring matplotlib/seaborn-based analysis scripts for genomics/bioinformatics workflows.
-tags: [python, matplotlib, typing, argparse, docstrings, bioinformatics, plotting]
----
-
 # Python Scientific Plotting Scripts
 
 Patterns for authoring and refactoring Python scripts that produce publication-quality plots in bioinformatics/genomics pipelines.
