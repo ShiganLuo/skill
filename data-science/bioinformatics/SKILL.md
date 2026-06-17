@@ -1,7 +1,7 @@
 ---
 name: bioinformatics
-description: Bioinformatics tools and genomics pipelines — RNA-seq quantification, gene body coverage, cross-sample reporting, SV visualization (OncoPrint), and Snakemake workflow orchestration.
-tags: [genomics, rna-seq, stringtie, quantification, bioinformatics, coverage, oncoprint, sv-visualization, snakemake, summary-report]
+description: Bioinformatics tools and genomics pipelines — RNA-seq quantification, gene body coverage, cross-sample reporting, SV visualization (OncoPrint), Snakemake workflow orchestration, sequencing depth analysis, CNV analysis (CNVkit), genomic interval filtering, and scientific plotting patterns.
+tags: [genomics, rna-seq, stringtie, quantification, bioinformatics, coverage, oncoprint, sv-visualization, snakemake, summary-report, cnv, cnvkit, copy-number, sequencing-depth, variant-detection, power-analysis, bed-annotation, genomic-interval, depth-filtering, large-file-processing, matplotlib, plotting, typing, argparse, docstrings]
 triggers:
   - StringTie, featureCounts, HTSeq, or other RNA-seq quantification
   - Gene abundance merging, TPM/FPKM/Coverage calculations
@@ -13,6 +13,24 @@ triggers:
   - oncoprint, SV comparison plot, structural variant visualization
   - Snakemake omics workflow, module creation, Nextflow porting
   - sample_id/task_id matching to file paths, path component matching
+  - depth analysis, minimum depth, sequencing depth requirements
+  - detection sensitivity, power analysis variant calling
+  - LOD score GATK, imputation accuracy low depth, UMI consensus detection
+  - coverage uniformity Poisson
+  - cnvkit output, segment size, copy number segments, cnv analysis
+  - .cns file, .cnr file, per-gene cnv, HRD score, median segment
+  - filter depth by BED, exclude intron UTR, BED annotation filtering
+  - genomic interval containment, filter depth file regions
+  - remove intronic positions, exon-only depth
+  - dbSNP VCF, chromosome naming mismatch, reference version mismatch
+  - GCF accession, dbsnp download, common SNP VCF
+  - assertion aux itr failed, housekeeping gene BED, gene list to BED
+  - refGene download, UCSC gene coordinates
+  - liftOver, pyliftover, coordinate conversion, assembly conversion, hg19 to hg38
+  - GMT file parse, MSigDB gene set, GTF gene extraction, GENCODE gene BED
+  - refactor plotting script, multi-format image output, significance brackets
+  - matplotlib scientific plot, seaborn analysis, broken axis, chi2 contingency
+  - ProcessPoolExecutor plotting, parallel gene plotting
 ---
 
 # Bioinformatics Tools & Genomics Pipelines
@@ -118,6 +136,43 @@ Multiprocessing: one worker per BAM (not per gene). See `references/coverage-ana
 
 ---
 
+## Sequencing Depth Analysis
+
+Compute minimum sequencing depth for variant detection across clinical, population, and research scenarios. 6 statistical models × 5 scenarios.
+
+### Quick Reference: Model Selection
+
+| Scenario | Best model | Why |
+|----------|-----------|-----|
+| Clinical somatic (VAF 1-10%) | LOD + error-aware binomial | Matches GATK/Mutect2 logic |
+| Liquid biopsy ctDNA (0.1-1%) | UMI-aware | Molecular consensus is critical |
+| Germline (VAF ~50%) | LOD (vaf_model=0.5) | Standard germline calling |
+| Population low-depth (1-4x) | Population imputation | LD-based imputation compensates |
+| Site-level coverage | Poisson uniformity | Depth at site ≠ average depth |
+
+### Key Results
+
+| Scenario | VAF | Required depth (95% power) |
+|----------|-----|---------------------------|
+| Clinical somatic | 5% | 120-230x (model-dependent) |
+| Clinical somatic | 1% | 570-2000x |
+| Germline het | 50% | 14-17x |
+| Population (1000 samples) | MAF 10% | ~1x/sample (R²≥0.80) |
+| Coverage uniformity | — | 537x avg for P(site≥500x)≥0.95 |
+
+### CLI
+
+```bash
+python cli.py list
+python cli.py sweep clinical_somatic --vaf 0.05 --output results/
+python cli.py min-depth germline --vafs 0.3 0.5 1.0
+python cli.py compare --output results/
+```
+
+See `references/depth-analysis-framework.md` for full framework, `references/depth-analysis-models.md` for mathematical formulations, `references/depth-analysis-pitfalls.md` for common mistakes.
+
+---
+
 ## Cross-Sample Tool Output Reporting
 
 Build Python scripts that parse bioinformatics tool output (TSV/VCF/BED), aggregate across samples, and produce TSV tables, HTML reports, and publication-quality figures with data-driven conclusions.
@@ -189,6 +244,50 @@ Multi-type cells: stack colored rectangles vertically (k=0 at bottom).
 - Parallel plotting: use `ProcessPoolExecutor` (not ThreadPoolExecutor — SQLite/gffutils thread safety issue)
 
 See `references/sv-visualization-detail.md` for full OncoPrint implementation.
+
+---
+
+## CNV Analysis (CNVkit)
+
+Analyze CNVkit output files (.cns, .cnr, .cnn, segments.txt) for copy number variation in clinical oncology pipelines.
+
+### File Structure
+
+| File | Description | Key Columns |
+|------|-------------|-------------|
+| `*.cnr` | Bin-level log2 ratios | chromosome, start, end, gene, log2, depth, weight |
+| `*.cns` | Segmented CN calls | chromosome, start, end, gene, log2, depth, probes, weight, ci_lo, ci_hi |
+| `*.call.cns` | Called CN states | adds total_cn, A_cn, B_cn |
+| `*.bintest.cns` | Per-bin significance | significant hit bins |
+
+Pipeline: BAM → .targetcoverage.cnn + .antitargetcoverage.cnn → .cnr → .cns → .call.cns
+
+### Gene Column Parsing
+
+The `gene` column in `.cns` is **comma-separated**:
+```python
+genes = [g.strip() for g in row['gene'].split(',') if g.strip() and g.strip() != '-']
+```
+
+### HRD Score Components
+
+In `tumor/risk{threshold}/{sample}_HRDresults.txt`:
+- **HRD-LOH**: Loss of heterozygosity segments
+- **LST**: Large-scale state transitions
+- **TAI**: Telomeric allelic imbalance
+- **HRD-sum**: Total (= HRD-LOH + LST + TAI)
+
+### Key Pitfalls
+
+- **Tool vs data questions**: "Does CNVkit use purity?" is a tool-property question — don't write a script.
+- **Gene column is comma-separated**, not tab-separated.
+- **Antitarget bins** use literal string `Antitarget` in gene column — filter these out.
+- **Risk threshold variants**: Pipeline runs 0.5/0.8/1.1 thresholds; primary results in `risk1.1/`.
+- **Duplicate rows** in annotation CSV: deduplicate by `(Gene, ExonStart, ExonEnd)`.
+- **Empty segments file**: Check both `tumor/{sample}.segments.txt` and `tumor/risk1.1/{sample}.segments.txt`.
+- **execute_code AF_UNIX path limit**: Use `terminal` with `python3` instead on long workspace paths.
+
+See `references/cnv-analysis-detail.md` for full file structure, per-gene analysis patterns, and clinical pipeline layout.
 
 ---
 
@@ -298,6 +397,70 @@ wget http://hgdownload.soe.ucsc.edu/goldenPath/hg19/liftOver/hg19ToHg38.over.cha
 
 ---
 
+## Genomic Interval Filtering
+
+Filter large genomic data files (depth, coverage, VCF) by BED annotation intervals. Stream multi-GB files with constant memory.
+
+### BED Coordinate Convention (CRITICAL)
+
+BED uses **0-based half-open** `[start, end)`. Depth/VCF `Pos` is **1-based inclusive**.
+
+Containment: `s < pos <= e` (equivalently: `pos >= s+1 and pos <= e`)
+
+Convert to 1-based: `[s + 1, e]` — NOT `[s+1, e-1]` (loses last base).
+
+### Interval Containment (Sorted Arrays, preferred over IntervalTree)
+
+```python
+from bisect import bisect_right
+
+def in_excluded(pos: int, intervals: tuple[list[int], list[int]]) -> bool:
+    starts, ends = intervals
+    idx = bisect_right(starts, pos) - 1
+    return 0 <= idx and pos <= ends[idx]
+```
+
+**Why NOT IntervalTree**: rejects zero-width intervals (single-base BED after conversion). Sorted arrays are cache-friendly for 100M+ queries, `bisect_right` is C-implemented.
+
+### Streaming Large Files
+
+```python
+with open(depth_path) as fin, open(output_path, "w") as fout:
+    fout.write(fin.readline())  # header
+    for line in fin:
+        parts = line.split("\t", maxsplit=2)  # only parse needed columns
+        chrom = normalize_chrom(parts[0])
+        pos = int(parts[1])
+        if not in_excluded(pos, intervals_by_chrom.get(chrom, ([], []))):
+            fout.write(line)
+```
+
+### Multiprocessing Pitfall
+
+Local functions inside `main()` cannot be pickled. Use module-level worker + `initializer=` pattern:
+```python
+TREES: dict | None = None
+def _init_worker(trees):
+    global TREES; TREES = trees
+def _worker(depth_path, output_path):
+    assert TREES is not None
+    ...
+with ProcessPoolExecutor(max_workers=args.workers, initializer=_init_worker, initargs=(trees,)) as pool:
+    pool.submit(_worker, ...)
+```
+
+### Key Pitfalls
+
+- **BED coordinate formula**: `[s+1, e]` not `[s+1, e-1]`.
+- **Chromosome mismatch**: Always normalize `chr` prefix. Silent miss = all positions kept (wrong).
+- **Reference version mismatch**: Using annotation from different assembly causes `Assertion 'aux->itr' failed` in htslib tools.
+- **GTF 1-based vs BED 0-based**: `bed_start = gtf_start - 1`.
+- **maxsplit in parsing**: Don't `split("\t")` entire 9+ column lines when you only need columns 0-1.
+
+See `references/genomic-interval-filtering-detail.md` for full implementation, `scripts/filter_intron_utr_reference.py` for production script. Assembly conversion and gene BED extraction overlap with Coordinate Liftover and GMT+GTF sections above — see those for details.
+
+---
+
 ## GMT + GTF → BED Extraction
 
 Extract gene-level BED coordinates from a GMT gene set file and a GENCODE GTF annotation.
@@ -349,3 +512,52 @@ def parse_gtf_gene_coords(gtf_path: str) -> dict:
 ## Path Matching Utilities
 
 Two-phase matching pattern for resolving sample/task IDs to file paths: regex full component match first, substring fallback if no exact match. See `references/path-matching-utilities.md` for implementation templates and pitfalls.
+
+---
+
+## Scientific Plotting Patterns
+
+Refactor and author Python scientific plotting scripts — multi-format output, proper typing, unified CLI, NumPy docstrings, significance brackets. For general matplotlib plotting patterns used across bioinformatics workflows.
+
+### Multi-Format Output
+
+Use `PlotFormat = Literal["png", "pdf", "svg", ...]` type alias. CLI: `-f`/`--format` with `action="append"`.
+
+**Pitfall**: Short-flag collision when retrofitting — reassign old `-f` first.
+
+### Container Environment (Cromwell, Docker)
+
+Set env vars BEFORE matplotlib import:
+```python
+_tmp_cache = os.path.join(os.environ.get("TMPDIR", "/tmp"), "matplotlib_cache")
+os.environ.setdefault("MPLCONFIGDIR", _tmp_cache)
+os.environ.setdefault("FONTCONFIG_PATH", os.path.join(_tmp_cache, "fontconfig"))
+```
+
+### Parallel Plotting
+
+**Always ProcessPoolExecutor, never ThreadPoolExecutor** — GIL prevents Python parallelism; SQLite (gffutils) is not thread-safe. `create_db()` must be inside worker function.
+
+**Container OOM**: `os.fork()` can hang in background thread. Use `map_async` with timeout + sequential fallback.
+
+### Significance Brackets (宝盖头 Style)
+
+Horizontal line from bar1 to bar2 center, with OUTWARD diagonal ticks `\` and `/`. Draw as SINGLE polyline. Store ALL pairs including `ns`. Reset `bracket_offset` per SV type, not globally.
+
+### Curve Smoothing for Asymptotic Data
+
+When pchip produces visible plateaus near ceiling (e.g. sensitivity→1.0), use `log(1-y)` asymptotic transform:
+```python
+z = -np.log(1.0 - np.clip(y, eps, 1.0 - eps))
+z_new = PchipInterpolator(x, z)(x_new)
+y_new = np.clip(1.0 - np.exp(-z_new), 0.0, 1.0)
+```
+
+### Key Pitfalls
+
+- **`ax.legend()` does NOT accept `alpha`** — use `framealpha`.
+- **ns color MUST be black** (same as stars) — distinguish by fontsize (12 vs 9) and weight.
+- **Never add threshold values to x-ticks** — use `ax.annotate` with leader line below axis.
+- **`os.environ.setdefault()`** so callers can override; use `TMPDIR` not hardcoded `/tmp`.
+
+See `references/python-scientific-plotting-detail.md` for full conventions, `references/asymptotic-smoothing.md` for transform details.

@@ -1,19 +1,3 @@
----
-name: cnv-analysis
-description: Analyze CNVkit output files (.cns, .cnr, .cnn, segments.txt) for CNV detection in clinical oncology pipelines. Covers file structure, per-gene segment statistics, HRD scoring, and common computations on segmented copy number data.
-tags: [cnv, cnvkit, copy-number, bioinformatics, oncology, segmentation]
-triggers:
-  - "cnvkit output"
-  - "segment size"
-  - "copy number segments"
-  - "cnv analysis"
-  - ".cns file"
-  - ".cnr file"
-  - "per-gene cnv"
-  - "HRD score"
-  - "median segment"
----
-
 # CNV Analysis
 
 Analyze CNVkit output files for copy number variation detection in clinical oncology pipelines.
