@@ -31,6 +31,9 @@ triggers:
   - refactor plotting script, multi-format image output, significance brackets
   - matplotlib scientific plot, seaborn analysis, broken axis, chi2 contingency
   - ProcessPoolExecutor plotting, parallel gene plotting
+  - MSI detection, microsatellite instability, bMSI blood-based MSI
+  - weighted entropy baseline, repeat-length distribution, per-locus XGBoost
+  - MSI feature engineering, msiRatio, msimssRatio, Fisher scatter ratio
 ---
 
 # Bioinformatics Tools & Genomics Pipelines
@@ -506,6 +509,14 @@ def parse_gtf_gene_coords(gtf_path: str) -> dict:
 - Filter with `'\tgene\t'` in line (column 3) — don't parse transcript/exon records.
 - When multiple gene records exist (patch haplotypes), keep the longest span.
 - GMT may contain aliases not matching GTF `gene_name` — report unmatched genes for review.
+
+---
+
+## MSI / bMSI Detection
+
+Microsatellite instability detection from tissue (tMSI) and liquid biopsy (bMSI). Covers repeat-length distribution features, weighted entropy, baseline QC chain, Fisher-like scatter metrics, bMSI data simulation (tissue signal injection at low AF), and per-locus XGBoost classifiers.
+
+See `references/msi-bmsi-detection.md` for feature engineering formulas, QC thresholds, simulation patterns, prediction workflow, and pitfalls.
 
 ---
 

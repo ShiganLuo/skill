@@ -16,14 +16,14 @@
     "archived_at": null,
     "created_at": "2026-06-02T07:24:01.196497+00:00",
     "created_by": "agent",
-    "last_patched_at": "2026-06-17T07:32:59.766986+00:00",
-    "last_used_at": "2026-06-17T07:28:11.990577+00:00",
-    "last_viewed_at": "2026-06-17T07:28:11.953001+00:00",
-    "patch_count": 23,
+    "last_patched_at": "2026-06-22T08:50:13.739399+00:00",
+    "last_used_at": "2026-06-22T08:48:14.730513+00:00",
+    "last_viewed_at": "2026-06-22T08:48:14.677443+00:00",
+    "patch_count": 28,
     "pinned": false,
     "state": "active",
-    "use_count": 5,
-    "view_count": 5
+    "use_count": 8,
+    "view_count": 8
   },
   "bioinformatics-sv-frequency-correction": {
     "archived_at": null,
