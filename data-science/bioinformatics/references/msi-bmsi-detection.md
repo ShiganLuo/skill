@@ -40,6 +40,27 @@ Used as the primary discriminant feature between MSS and MSI-H.
 
 ## Baseline Construction
 
+### BASELINE_HEADER Columns (23 total)
+
+**Locus identity (cols 0-9)**: from site file template
+`chromosome`, `location`, `repeat_unit_length`, `repeat_unit_binary`, `repeat_times`, `left_flank_binary`, `right_flank_binary`, `repeat_unit_bases`, `left_flank_bases`, `right_flank_bases`
+
+**Sample statistics (cols 10-14)**:
+`mss_spnum` (MSS sample count), `msih_spnum` (MSI-H sample count), `mu_mss` (MSS mean), `sigma_mss` (MSS std), `mu_msih` (MSI-H mean)
+
+**Discrimination metrics (cols 15-18)**:
+`sb` (between-class scatter), `sw_mss` (within-class scatter MSS), `maxacc_thr` (threshold at max accuracy), `auc` (ROC AUC)
+
+**Scoring (cols 19-22)**:
+`max_accuracy`, `accuracy`, `threshold` (MSS mu + 3*sigma), `weight` (normalized, 0 = filtered)
+
+### Weight Calculation (3-step)
+
+1. If AUC < 0.7 or max_accuracy < 0.7 → weight = 0 (filtered)
+2. Otherwise → weight = accuracy (classification accuracy at threshold)
+3. Merge: if either MSI-H or MSS has weight=0 → final=0
+4. Normalize: `weight *= n_pass / sum(weights)` so all weights sum to pass count
+
 ### QC Chain (cascading filters)
 
 1. **Sample QC**: mean depth ≥ 100 across all sites
@@ -181,6 +202,35 @@ Return `pos_weight` as a new dict instead of mutating an input parameter. Merge 
 - **Triple-quote pseudo-comments**: `'''...'''` used as commented-out code is a string literal, not a comment — use `#` or delete
 - **Python logging format**: `%(logger_name)s` is NOT a valid field; use `%(name)s` (standard logger name)
 - **open() encoding**: always specify `encoding="utf-8"` for cross-platform compatibility
+
+## Result Collection Pattern (msisensor-pro output)
+
+When aggregating per-sample results from directories with 5000+ subdirectories, `glob.glob()` may timeout on NFS. Use `os.scandir()` instead:
+
+```python
+rows = []
+for entry in os.scandir(result_dir):
+    if entry.is_dir():
+        sample_id = entry.name
+        msi_file = os.path.join(entry.path, f"{sample_id}.msi")
+        if os.path.isfile(msi_file):
+            parsed = parse_msi_file(msi_file)
+            if parsed:
+                rows.append({"sample_id": sample_id, **parsed})
+```
+
+### Sample ID Extraction from BAM Path
+
+When metadata lacks explicit sample_id, extract from bam_path by splitting on `_cancer`:
+```python
+def extract_sample_id(bam_path):
+    basename = os.path.basename(bam_path)
+    if "_cancer" in basename:
+        return basename.split("_cancer")[0]
+    return None
+```
+
+Then merge via `pd.merge(msi_df, meta, on="sample_id", how="inner")`.
 
 ## Common File Patterns
 

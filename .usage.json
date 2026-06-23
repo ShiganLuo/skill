@@ -16,14 +16,14 @@
     "archived_at": null,
     "created_at": "2026-06-02T07:24:01.196497+00:00",
     "created_by": "agent",
-    "last_patched_at": "2026-06-22T08:50:13.739399+00:00",
-    "last_used_at": "2026-06-22T08:48:14.730513+00:00",
-    "last_viewed_at": "2026-06-22T08:48:14.677443+00:00",
-    "patch_count": 28,
+    "last_patched_at": "2026-06-23T07:43:34.977706+00:00",
+    "last_used_at": "2026-06-23T07:39:00.862235+00:00",
+    "last_viewed_at": "2026-06-23T07:39:00.826611+00:00",
+    "patch_count": 34,
     "pinned": false,
     "state": "active",
-    "use_count": 8,
-    "view_count": 8
+    "use_count": 15,
+    "view_count": 15
   },
   "bioinformatics-sv-frequency-correction": {
     "archived_at": null,
@@ -55,14 +55,14 @@
     "archived_at": null,
     "created_at": "2026-05-22T07:58:44.684872+00:00",
     "created_by": "agent",
-    "last_patched_at": "2026-06-06T14:35:20.091492+00:00",
-    "last_used_at": "2026-06-17T07:28:13.125914+00:00",
-    "last_viewed_at": "2026-06-17T07:28:13.080430+00:00",
-    "patch_count": 14,
+    "last_patched_at": "2026-06-23T01:42:00.028067+00:00",
+    "last_used_at": "2026-06-23T01:41:42.169440+00:00",
+    "last_viewed_at": "2026-06-23T01:41:42.136767+00:00",
+    "patch_count": 15,
     "pinned": false,
     "state": "active",
-    "use_count": 11,
-    "view_count": 11
+    "use_count": 12,
+    "view_count": 12
   },
   "gene-body-coverage": {
     "archived_at": null,
@@ -89,5 +89,44 @@
     "state": "active",
     "use_count": 2,
     "view_count": 2
+  },
+  "msi-detection": {
+    "archived_at": null,
+    "created_at": "2026-06-23T04:14:54.810249+00:00",
+    "created_by": "agent",
+    "last_patched_at": "2026-06-23T08:58:06.854021+00:00",
+    "last_used_at": "2026-06-23T08:56:34.015321+00:00",
+    "last_viewed_at": "2026-06-23T08:56:33.980597+00:00",
+    "patch_count": 6,
+    "pinned": false,
+    "state": "active",
+    "use_count": 2,
+    "view_count": 2
+  },
+  "msi-detection-analysis": {
+    "archived_at": null,
+    "created_at": "2026-06-23T03:01:40.798507+00:00",
+    "created_by": "agent",
+    "last_patched_at": "2026-06-23T03:02:11.600874+00:00",
+    "last_used_at": null,
+    "last_viewed_at": null,
+    "patch_count": 1,
+    "pinned": false,
+    "state": "active",
+    "use_count": 0,
+    "view_count": 0
+  },
+  "msi-detection-pipeline": {
+    "archived_at": null,
+    "created_at": "2026-06-23T02:18:55.787923+00:00",
+    "created_by": "agent",
+    "last_patched_at": "2026-06-23T09:31:18.019278+00:00",
+    "last_used_at": "2026-06-23T09:28:03.184667+00:00",
+    "last_viewed_at": "2026-06-23T09:28:03.148353+00:00",
+    "patch_count": 10,
+    "pinned": false,
+    "state": "active",
+    "use_count": 3,
+    "view_count": 3
   }
 }
