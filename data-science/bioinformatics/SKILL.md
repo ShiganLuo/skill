@@ -72,11 +72,119 @@ TPM, FPKM, and Coverage are normalized metrics and cannot be simply summed. Corr
 
 1. **TPM**: Direct sum is mathematically valid. TPM is per-million normalized; same-sample sums preserve correct relative proportions.
 2. **FPKM**: Direct sum is valid for the same reason (per-gene normalization).
-3. **Coverage**: Must be length-weighted average:
-   ```
+model/{site_name}/                 # per-locus XGBoost models
+```
+
+## Anomaly Detection for MSI-H
+
+When labeled MSI-H samples are scarce, anomaly detection trains only on MSS samples and flags deviations.
+
+### Mahalanobis Distance (No sklearn)
+
+```python
+class MahalanobisDetector:
+    def fit(self, X_mss, n_sigma=3):
+        self.mean_ = np.mean(X_mss, axis=0)
+        cov = np.cov(X_mss, rowvar=False) + np.eye(n) * 1e-6
+        self.cov_inv_ = np.linalg.inv(cov)
+        dists = [mahalanobis(x, self.mean_, self.cov_inv_) for x in X_mss]
+        self.threshold_ = np.mean(dists) + n_sigma * np.std(dists)
+```
+
+**Relationship to Gaussian**: Mahalanobis distance = negative log-likelihood under multivariate Gaussian. `d²(x) = -2 log p(x) + const`.
+
+### ROC from Scratch
+
+```python
+from scipy.integrate import trapezoid
+sorted_idx = np.argsort(scores)[::-1]
+tps = np.cumsum(y_true[sorted_idx])
+fps = np.cumsum(1 - y_true[sorted_idx])
+tpr = np.concatenate([[0], tps / tps[-1]])
+fpr = np.concatenate([[0], fps / fps[-1]])
+roc_auc = trapezoid(tpr, fpr)
+```
+
+### Key Finding
+
+Coverage features (mean_coverage, std_coverage) dominate Mahalanobis distance, masking MSI signal. **Remove coverage features**, keep only pro_p/pro_q-derived features.
+
+## Cancer Type Stratification
+
+| Cancer | n | MSI-H mean | MSS mean | AUC | Threshold |
+|--------|---|-----------|----------|-----|-----------|
+| CRC | 422 | 14.09% | 6.56% | 0.969 | 8.39% |
+| Endometrial | 130 | 9.47% | 6.46% | 0.912 | 7.24% |
+
+MSS baseline ~6.5% across cancer types. MSI-H signal varies → different thresholds needed.
+
+## Large-Scale File Processing
+
+```python
+# FAST: os.scandir() for 5000+ files
+for entry in os.scandir(result_dir): ...
+
+# SLOW: glob.glob() may timeout on NFS
+```
+
+**Performance**: 100 site.txt ≈ 2-6s, 8000 files ≈ 400-500s.
    Coverage_merged = sum(Cov_i * L_i) / sum(L_i)
-   where L_i = End_i - Start_i
-   ```
+model/{site_name}/                 # per-locus XGBoost models
+```
+
+## Anomaly Detection for MSI-H
+
+When labeled MSI-H samples are scarce, anomaly detection trains only on MSS samples and flags deviations.
+
+### Mahalanobis Distance (No sklearn)
+
+```python
+class MahalanobisDetector:
+    def fit(self, X_mss, n_sigma=3):
+        self.mean_ = np.mean(X_mss, axis=0)
+        cov = np.cov(X_mss, rowvar=False) + np.eye(n) * 1e-6
+        self.cov_inv_ = np.linalg.inv(cov)
+        dists = [mahalanobis(x, self.mean_, self.cov_inv_) for x in X_mss]
+        self.threshold_ = np.mean(dists) + n_sigma * np.std(dists)
+```
+
+**Relationship to Gaussian**: Mahalanobis distance = negative log-likelihood under multivariate Gaussian. `d²(x) = -2 log p(x) + const`.
+
+### ROC from Scratch
+
+```python
+from scipy.integrate import trapezoid
+sorted_idx = np.argsort(scores)[::-1]
+tps = np.cumsum(y_true[sorted_idx])
+fps = np.cumsum(1 - y_true[sorted_idx])
+tpr = np.concatenate([[0], tps / tps[-1]])
+fpr = np.concatenate([[0], fps / fps[-1]])
+roc_auc = trapezoid(tpr, fpr)
+```
+
+### Key Finding
+
+Coverage features (mean_coverage, std_coverage) dominate Mahalanobis distance, masking MSI signal. **Remove coverage features**, keep only pro_p/pro_q-derived features.
+
+## Cancer Type Stratification
+
+| Cancer | n | MSI-H mean | MSS mean | AUC | Threshold |
+|--------|---|-----------|----------|-----|-----------|
+| CRC | 422 | 14.09% | 6.56% | 0.969 | 8.39% |
+| Endometrial | 130 | 9.47% | 6.46% | 0.912 | 7.24% |
+
+MSS baseline ~6.5% across cancer types. MSI-H signal varies → different thresholds needed.
+
+## Large-Scale File Processing
+
+```python
+# FAST: os.scandir() for 5000+ files
+for entry in os.scandir(result_dir): ...
+
+# SLOW: glob.glob() may timeout on NFS
+```
+
+**Performance**: 100 site.txt ≈ 2-6s, 8000 files ≈ 400-500s.
 4. **Start/End**: min(Start) / max(End). Must remain **int type** — do not convert to float.
 5. **Output order**: Preserve original row order (first occurrence position), do NOT sort by gene_id.
 
@@ -116,8 +224,62 @@ python geneBody_coverage.py \
     --bins 100 \           # percentiles across gene body
     --min-length 100 \     # skip short genes
     --exclude-region UTR IVS \
-    --plot-format png
+model/{site_name}/                 # per-locus XGBoost models
 ```
+
+## Anomaly Detection for MSI-H
+
+When labeled MSI-H samples are scarce, anomaly detection trains only on MSS samples and flags deviations.
+
+### Mahalanobis Distance (No sklearn)
+
+```python
+class MahalanobisDetector:
+    def fit(self, X_mss, n_sigma=3):
+        self.mean_ = np.mean(X_mss, axis=0)
+        cov = np.cov(X_mss, rowvar=False) + np.eye(n) * 1e-6
+        self.cov_inv_ = np.linalg.inv(cov)
+        dists = [mahalanobis(x, self.mean_, self.cov_inv_) for x in X_mss]
+        self.threshold_ = np.mean(dists) + n_sigma * np.std(dists)
+```
+
+**Relationship to Gaussian**: Mahalanobis distance = negative log-likelihood under multivariate Gaussian. `d²(x) = -2 log p(x) + const`.
+
+### ROC from Scratch
+
+```python
+from scipy.integrate import trapezoid
+sorted_idx = np.argsort(scores)[::-1]
+tps = np.cumsum(y_true[sorted_idx])
+fps = np.cumsum(1 - y_true[sorted_idx])
+tpr = np.concatenate([[0], tps / tps[-1]])
+fpr = np.concatenate([[0], fps / fps[-1]])
+roc_auc = trapezoid(tpr, fpr)
+```
+
+### Key Finding
+
+Coverage features (mean_coverage, std_coverage) dominate Mahalanobis distance, masking MSI signal. **Remove coverage features**, keep only pro_p/pro_q-derived features.
+
+## Cancer Type Stratification
+
+| Cancer | n | MSI-H mean | MSS mean | AUC | Threshold |
+|--------|---|-----------|----------|-----|-----------|
+| CRC | 422 | 14.09% | 6.56% | 0.969 | 8.39% |
+| Endometrial | 130 | 9.47% | 6.46% | 0.912 | 7.24% |
+
+MSS baseline ~6.5% across cancer types. MSI-H signal varies → different thresholds needed.
+
+## Large-Scale File Processing
+
+```python
+# FAST: os.scandir() for 5000+ files
+for entry in os.scandir(result_dir): ...
+
+# SLOW: glob.glob() may timeout on NFS
+```
+
+**Performance**: 100 site.txt ≈ 2-6s, 8000 files ≈ 400-500s.
 
 ### Coverage Pitfalls
 
@@ -169,8 +331,62 @@ Compute minimum sequencing depth for variant detection across clinical, populati
 python cli.py list
 python cli.py sweep clinical_somatic --vaf 0.05 --output results/
 python cli.py min-depth germline --vafs 0.3 0.5 1.0
-python cli.py compare --output results/
+model/{site_name}/                 # per-locus XGBoost models
 ```
+
+## Anomaly Detection for MSI-H
+
+When labeled MSI-H samples are scarce, anomaly detection trains only on MSS samples and flags deviations.
+
+### Mahalanobis Distance (No sklearn)
+
+```python
+class MahalanobisDetector:
+    def fit(self, X_mss, n_sigma=3):
+        self.mean_ = np.mean(X_mss, axis=0)
+        cov = np.cov(X_mss, rowvar=False) + np.eye(n) * 1e-6
+        self.cov_inv_ = np.linalg.inv(cov)
+        dists = [mahalanobis(x, self.mean_, self.cov_inv_) for x in X_mss]
+        self.threshold_ = np.mean(dists) + n_sigma * np.std(dists)
+```
+
+**Relationship to Gaussian**: Mahalanobis distance = negative log-likelihood under multivariate Gaussian. `d²(x) = -2 log p(x) + const`.
+
+### ROC from Scratch
+
+```python
+from scipy.integrate import trapezoid
+sorted_idx = np.argsort(scores)[::-1]
+tps = np.cumsum(y_true[sorted_idx])
+fps = np.cumsum(1 - y_true[sorted_idx])
+tpr = np.concatenate([[0], tps / tps[-1]])
+fpr = np.concatenate([[0], fps / fps[-1]])
+roc_auc = trapezoid(tpr, fpr)
+```
+
+### Key Finding
+
+Coverage features (mean_coverage, std_coverage) dominate Mahalanobis distance, masking MSI signal. **Remove coverage features**, keep only pro_p/pro_q-derived features.
+
+## Cancer Type Stratification
+
+| Cancer | n | MSI-H mean | MSS mean | AUC | Threshold |
+|--------|---|-----------|----------|-----|-----------|
+| CRC | 422 | 14.09% | 6.56% | 0.969 | 8.39% |
+| Endometrial | 130 | 9.47% | 6.46% | 0.912 | 7.24% |
+
+MSS baseline ~6.5% across cancer types. MSI-H signal varies → different thresholds needed.
+
+## Large-Scale File Processing
+
+```python
+# FAST: os.scandir() for 5000+ files
+for entry in os.scandir(result_dir): ...
+
+# SLOW: glob.glob() may timeout on NFS
+```
+
+**Performance**: 100 site.txt ≈ 2-6s, 8000 files ≈ 400-500s.
 
 See `references/depth-analysis-framework.md` for full framework, `references/depth-analysis-models.md` for mathematical formulations, `references/depth-analysis-pitfalls.md` for common mistakes.
 
@@ -226,8 +442,62 @@ gs = fig.add_gridspec(2, 2,
     height_ratios=[1, 4],
     wspace=0.04, hspace=0.04)
 
-# WRONG — when n_genes=20, height_ratios=[0.8, 20] compresses main grid to nothing
+model/{site_name}/                 # per-locus XGBoost models
 ```
+
+## Anomaly Detection for MSI-H
+
+When labeled MSI-H samples are scarce, anomaly detection trains only on MSS samples and flags deviations.
+
+### Mahalanobis Distance (No sklearn)
+
+```python
+class MahalanobisDetector:
+    def fit(self, X_mss, n_sigma=3):
+        self.mean_ = np.mean(X_mss, axis=0)
+        cov = np.cov(X_mss, rowvar=False) + np.eye(n) * 1e-6
+        self.cov_inv_ = np.linalg.inv(cov)
+        dists = [mahalanobis(x, self.mean_, self.cov_inv_) for x in X_mss]
+        self.threshold_ = np.mean(dists) + n_sigma * np.std(dists)
+```
+
+**Relationship to Gaussian**: Mahalanobis distance = negative log-likelihood under multivariate Gaussian. `d²(x) = -2 log p(x) + const`.
+
+### ROC from Scratch
+
+```python
+from scipy.integrate import trapezoid
+sorted_idx = np.argsort(scores)[::-1]
+tps = np.cumsum(y_true[sorted_idx])
+fps = np.cumsum(1 - y_true[sorted_idx])
+tpr = np.concatenate([[0], tps / tps[-1]])
+fpr = np.concatenate([[0], fps / fps[-1]])
+roc_auc = trapezoid(tpr, fpr)
+```
+
+### Key Finding
+
+Coverage features (mean_coverage, std_coverage) dominate Mahalanobis distance, masking MSI signal. **Remove coverage features**, keep only pro_p/pro_q-derived features.
+
+## Cancer Type Stratification
+
+| Cancer | n | MSI-H mean | MSS mean | AUC | Threshold |
+|--------|---|-----------|----------|-----|-----------|
+| CRC | 422 | 14.09% | 6.56% | 0.969 | 8.39% |
+| Endometrial | 130 | 9.47% | 6.46% | 0.912 | 7.24% |
+
+MSS baseline ~6.5% across cancer types. MSI-H signal varies → different thresholds needed.
+
+## Large-Scale File Processing
+
+```python
+# FAST: os.scandir() for 5000+ files
+for entry in os.scandir(result_dir): ...
+
+# SLOW: glob.glob() may timeout on NFS
+```
+
+**Performance**: 100 site.txt ≈ 2-6s, 8000 files ≈ 400-500s.
 
 **Pitfalls:**
 1. Never use `n_samples`/`n_genes` as gridspec ratios
@@ -269,8 +539,62 @@ Pipeline: BAM → .targetcoverage.cnn + .antitargetcoverage.cnn → .cnr → .cn
 
 The `gene` column in `.cns` is **comma-separated**:
 ```python
-genes = [g.strip() for g in row['gene'].split(',') if g.strip() and g.strip() != '-']
+model/{site_name}/                 # per-locus XGBoost models
 ```
+
+## Anomaly Detection for MSI-H
+
+When labeled MSI-H samples are scarce, anomaly detection trains only on MSS samples and flags deviations.
+
+### Mahalanobis Distance (No sklearn)
+
+```python
+class MahalanobisDetector:
+    def fit(self, X_mss, n_sigma=3):
+        self.mean_ = np.mean(X_mss, axis=0)
+        cov = np.cov(X_mss, rowvar=False) + np.eye(n) * 1e-6
+        self.cov_inv_ = np.linalg.inv(cov)
+        dists = [mahalanobis(x, self.mean_, self.cov_inv_) for x in X_mss]
+        self.threshold_ = np.mean(dists) + n_sigma * np.std(dists)
+```
+
+**Relationship to Gaussian**: Mahalanobis distance = negative log-likelihood under multivariate Gaussian. `d²(x) = -2 log p(x) + const`.
+
+### ROC from Scratch
+
+```python
+from scipy.integrate import trapezoid
+sorted_idx = np.argsort(scores)[::-1]
+tps = np.cumsum(y_true[sorted_idx])
+fps = np.cumsum(1 - y_true[sorted_idx])
+tpr = np.concatenate([[0], tps / tps[-1]])
+fpr = np.concatenate([[0], fps / fps[-1]])
+roc_auc = trapezoid(tpr, fpr)
+```
+
+### Key Finding
+
+Coverage features (mean_coverage, std_coverage) dominate Mahalanobis distance, masking MSI signal. **Remove coverage features**, keep only pro_p/pro_q-derived features.
+
+## Cancer Type Stratification
+
+| Cancer | n | MSI-H mean | MSS mean | AUC | Threshold |
+|--------|---|-----------|----------|-----|-----------|
+| CRC | 422 | 14.09% | 6.56% | 0.969 | 8.39% |
+| Endometrial | 130 | 9.47% | 6.46% | 0.912 | 7.24% |
+
+MSS baseline ~6.5% across cancer types. MSI-H signal varies → different thresholds needed.
+
+## Large-Scale File Processing
+
+```python
+# FAST: os.scandir() for 5000+ files
+for entry in os.scandir(result_dir): ...
+
+# SLOW: glob.glob() may timeout on NFS
+```
+
+**Performance**: 100 site.txt ≈ 2-6s, 8000 files ≈ 400-500s.
 
 ### HRD Score Components
 
@@ -314,13 +638,121 @@ Add new modules, subworkflows, and pipelines to the Omics Snakemake project, inc
 6. Create modules in `modules/<tool>/`
 
 ### Module 3-File Pattern
-
+model/{site_name}/                 # per-locus XGBoost models
 ```
+
+## Anomaly Detection for MSI-H
+
+When labeled MSI-H samples are scarce, anomaly detection trains only on MSS samples and flags deviations.
+
+### Mahalanobis Distance (No sklearn)
+
+```python
+class MahalanobisDetector:
+    def fit(self, X_mss, n_sigma=3):
+        self.mean_ = np.mean(X_mss, axis=0)
+        cov = np.cov(X_mss, rowvar=False) + np.eye(n) * 1e-6
+        self.cov_inv_ = np.linalg.inv(cov)
+        dists = [mahalanobis(x, self.mean_, self.cov_inv_) for x in X_mss]
+        self.threshold_ = np.mean(dists) + n_sigma * np.std(dists)
+```
+
+**Relationship to Gaussian**: Mahalanobis distance = negative log-likelihood under multivariate Gaussian. `d²(x) = -2 log p(x) + const`.
+
+### ROC from Scratch
+
+```python
+from scipy.integrate import trapezoid
+sorted_idx = np.argsort(scores)[::-1]
+tps = np.cumsum(y_true[sorted_idx])
+fps = np.cumsum(1 - y_true[sorted_idx])
+tpr = np.concatenate([[0], tps / tps[-1]])
+fpr = np.concatenate([[0], fps / fps[-1]])
+roc_auc = trapezoid(tpr, fpr)
+```
+
+### Key Finding
+
+Coverage features (mean_coverage, std_coverage) dominate Mahalanobis distance, masking MSI signal. **Remove coverage features**, keep only pro_p/pro_q-derived features.
+
+## Cancer Type Stratification
+
+| Cancer | n | MSI-H mean | MSS mean | AUC | Threshold |
+|--------|---|-----------|----------|-----|-----------|
+| CRC | 422 | 14.09% | 6.56% | 0.969 | 8.39% |
+| Endometrial | 130 | 9.47% | 6.46% | 0.912 | 7.24% |
+
+MSS baseline ~6.5% across cancer types. MSI-H signal varies → different thresholds needed.
+
+## Large-Scale File Processing
+
+```python
+# FAST: os.scandir() for 5000+ files
+for entry in os.scandir(result_dir): ...
+
+# SLOW: glob.glob() may timeout on NFS
+```
+
+**Performance**: 100 site.txt ≈ 2-6s, 8000 files ≈ 400-500s.
 modules/<tool>/
   <tool>.smk    # Snakemake rules
   <tool>.json   # Config template
-  <tool>.yaml   # Conda environment
+model/{site_name}/                 # per-locus XGBoost models
 ```
+
+## Anomaly Detection for MSI-H
+
+When labeled MSI-H samples are scarce, anomaly detection trains only on MSS samples and flags deviations.
+
+### Mahalanobis Distance (No sklearn)
+
+```python
+class MahalanobisDetector:
+    def fit(self, X_mss, n_sigma=3):
+        self.mean_ = np.mean(X_mss, axis=0)
+        cov = np.cov(X_mss, rowvar=False) + np.eye(n) * 1e-6
+        self.cov_inv_ = np.linalg.inv(cov)
+        dists = [mahalanobis(x, self.mean_, self.cov_inv_) for x in X_mss]
+        self.threshold_ = np.mean(dists) + n_sigma * np.std(dists)
+```
+
+**Relationship to Gaussian**: Mahalanobis distance = negative log-likelihood under multivariate Gaussian. `d²(x) = -2 log p(x) + const`.
+
+### ROC from Scratch
+
+```python
+from scipy.integrate import trapezoid
+sorted_idx = np.argsort(scores)[::-1]
+tps = np.cumsum(y_true[sorted_idx])
+fps = np.cumsum(1 - y_true[sorted_idx])
+tpr = np.concatenate([[0], tps / tps[-1]])
+fpr = np.concatenate([[0], fps / fps[-1]])
+roc_auc = trapezoid(tpr, fpr)
+```
+
+### Key Finding
+
+Coverage features (mean_coverage, std_coverage) dominate Mahalanobis distance, masking MSI signal. **Remove coverage features**, keep only pro_p/pro_q-derived features.
+
+## Cancer Type Stratification
+
+| Cancer | n | MSI-H mean | MSS mean | AUC | Threshold |
+|--------|---|-----------|----------|-----|-----------|
+| CRC | 422 | 14.09% | 6.56% | 0.969 | 8.39% |
+| Endometrial | 130 | 9.47% | 6.46% | 0.912 | 7.24% |
+
+MSS baseline ~6.5% across cancer types. MSI-H signal varies → different thresholds needed.
+
+## Large-Scale File Processing
+
+```python
+# FAST: os.scandir() for 5000+ files
+for entry in os.scandir(result_dir): ...
+
+# SLOW: glob.glob() may timeout on NFS
+```
+
+**Performance**: 100 site.txt ≈ 2-6s, 8000 files ≈ 400-500s.
 
 ### Key Conventions
 
@@ -359,8 +791,62 @@ Convert genomic coordinates between assemblies using `pyliftover` (pure Python, 
 ```python
 # Returns: [(new_chrom, new_pos, strand, score), ...] or None
 result = lo.convert_coordinate('chr1', 69069)
-# [('chr1', 69069, '-', 20851231461)]
+model/{site_name}/                 # per-locus XGBoost models
 ```
+
+## Anomaly Detection for MSI-H
+
+When labeled MSI-H samples are scarce, anomaly detection trains only on MSS samples and flags deviations.
+
+### Mahalanobis Distance (No sklearn)
+
+```python
+class MahalanobisDetector:
+    def fit(self, X_mss, n_sigma=3):
+        self.mean_ = np.mean(X_mss, axis=0)
+        cov = np.cov(X_mss, rowvar=False) + np.eye(n) * 1e-6
+        self.cov_inv_ = np.linalg.inv(cov)
+        dists = [mahalanobis(x, self.mean_, self.cov_inv_) for x in X_mss]
+        self.threshold_ = np.mean(dists) + n_sigma * np.std(dists)
+```
+
+**Relationship to Gaussian**: Mahalanobis distance = negative log-likelihood under multivariate Gaussian. `d²(x) = -2 log p(x) + const`.
+
+### ROC from Scratch
+
+```python
+from scipy.integrate import trapezoid
+sorted_idx = np.argsort(scores)[::-1]
+tps = np.cumsum(y_true[sorted_idx])
+fps = np.cumsum(1 - y_true[sorted_idx])
+tpr = np.concatenate([[0], tps / tps[-1]])
+fpr = np.concatenate([[0], fps / fps[-1]])
+roc_auc = trapezoid(tpr, fpr)
+```
+
+### Key Finding
+
+Coverage features (mean_coverage, std_coverage) dominate Mahalanobis distance, masking MSI signal. **Remove coverage features**, keep only pro_p/pro_q-derived features.
+
+## Cancer Type Stratification
+
+| Cancer | n | MSI-H mean | MSS mean | AUC | Threshold |
+|--------|---|-----------|----------|-----|-----------|
+| CRC | 422 | 14.09% | 6.56% | 0.969 | 8.39% |
+| Endometrial | 130 | 9.47% | 6.46% | 0.912 | 7.24% |
+
+MSS baseline ~6.5% across cancer types. MSI-H signal varies → different thresholds needed.
+
+## Large-Scale File Processing
+
+```python
+# FAST: os.scandir() for 5000+ files
+for entry in os.scandir(result_dir): ...
+
+# SLOW: glob.glob() may timeout on NFS
+```
+
+**Performance**: 100 site.txt ≈ 2-6s, 8000 files ≈ 400-500s.
 
 For BED intervals, convert start and end **separately**, then check they land on the same chromosome:
 ```python
@@ -381,15 +867,123 @@ def convert_interval(lo, chrom, start, end, output_chr_style=False):
     else:
         if new_chrom.startswith('chr'):
             new_chrom = new_chrom[3:]
-    return (new_chrom, int(new_start), int(new_end))
+model/{site_name}/                 # per-locus XGBoost models
 ```
+
+## Anomaly Detection for MSI-H
+
+When labeled MSI-H samples are scarce, anomaly detection trains only on MSS samples and flags deviations.
+
+### Mahalanobis Distance (No sklearn)
+
+```python
+class MahalanobisDetector:
+    def fit(self, X_mss, n_sigma=3):
+        self.mean_ = np.mean(X_mss, axis=0)
+        cov = np.cov(X_mss, rowvar=False) + np.eye(n) * 1e-6
+        self.cov_inv_ = np.linalg.inv(cov)
+        dists = [mahalanobis(x, self.mean_, self.cov_inv_) for x in X_mss]
+        self.threshold_ = np.mean(dists) + n_sigma * np.std(dists)
+```
+
+**Relationship to Gaussian**: Mahalanobis distance = negative log-likelihood under multivariate Gaussian. `d²(x) = -2 log p(x) + const`.
+
+### ROC from Scratch
+
+```python
+from scipy.integrate import trapezoid
+sorted_idx = np.argsort(scores)[::-1]
+tps = np.cumsum(y_true[sorted_idx])
+fps = np.cumsum(1 - y_true[sorted_idx])
+tpr = np.concatenate([[0], tps / tps[-1]])
+fpr = np.concatenate([[0], fps / fps[-1]])
+roc_auc = trapezoid(tpr, fpr)
+```
+
+### Key Finding
+
+Coverage features (mean_coverage, std_coverage) dominate Mahalanobis distance, masking MSI signal. **Remove coverage features**, keep only pro_p/pro_q-derived features.
+
+## Cancer Type Stratification
+
+| Cancer | n | MSI-H mean | MSS mean | AUC | Threshold |
+|--------|---|-----------|----------|-----|-----------|
+| CRC | 422 | 14.09% | 6.56% | 0.969 | 8.39% |
+| Endometrial | 130 | 9.47% | 6.46% | 0.912 | 7.24% |
+
+MSS baseline ~6.5% across cancer types. MSI-H signal varies → different thresholds needed.
+
+## Large-Scale File Processing
+
+```python
+# FAST: os.scandir() for 5000+ files
+for entry in os.scandir(result_dir): ...
+
+# SLOW: glob.glob() may timeout on NFS
+```
+
+**Performance**: 100 site.txt ≈ 2-6s, 8000 files ≈ 400-500s.
 
 ### Chain Files
 
 Download from UCSC:
 ```bash
-wget http://hgdownload.soe.ucsc.edu/goldenPath/hg19/liftOver/hg19ToHg38.over.chain.gz
+model/{site_name}/                 # per-locus XGBoost models
 ```
+
+## Anomaly Detection for MSI-H
+
+When labeled MSI-H samples are scarce, anomaly detection trains only on MSS samples and flags deviations.
+
+### Mahalanobis Distance (No sklearn)
+
+```python
+class MahalanobisDetector:
+    def fit(self, X_mss, n_sigma=3):
+        self.mean_ = np.mean(X_mss, axis=0)
+        cov = np.cov(X_mss, rowvar=False) + np.eye(n) * 1e-6
+        self.cov_inv_ = np.linalg.inv(cov)
+        dists = [mahalanobis(x, self.mean_, self.cov_inv_) for x in X_mss]
+        self.threshold_ = np.mean(dists) + n_sigma * np.std(dists)
+```
+
+**Relationship to Gaussian**: Mahalanobis distance = negative log-likelihood under multivariate Gaussian. `d²(x) = -2 log p(x) + const`.
+
+### ROC from Scratch
+
+```python
+from scipy.integrate import trapezoid
+sorted_idx = np.argsort(scores)[::-1]
+tps = np.cumsum(y_true[sorted_idx])
+fps = np.cumsum(1 - y_true[sorted_idx])
+tpr = np.concatenate([[0], tps / tps[-1]])
+fpr = np.concatenate([[0], fps / fps[-1]])
+roc_auc = trapezoid(tpr, fpr)
+```
+
+### Key Finding
+
+Coverage features (mean_coverage, std_coverage) dominate Mahalanobis distance, masking MSI signal. **Remove coverage features**, keep only pro_p/pro_q-derived features.
+
+## Cancer Type Stratification
+
+| Cancer | n | MSI-H mean | MSS mean | AUC | Threshold |
+|--------|---|-----------|----------|-----|-----------|
+| CRC | 422 | 14.09% | 6.56% | 0.969 | 8.39% |
+| Endometrial | 130 | 9.47% | 6.46% | 0.912 | 7.24% |
+
+MSS baseline ~6.5% across cancer types. MSI-H signal varies → different thresholds needed.
+
+## Large-Scale File Processing
+
+```python
+# FAST: os.scandir() for 5000+ files
+for entry in os.scandir(result_dir): ...
+
+# SLOW: glob.glob() may timeout on NFS
+```
+
+**Performance**: 100 site.txt ≈ 2-6s, 8000 files ≈ 400-500s.
 
 ### Pitfalls
 
@@ -420,8 +1014,62 @@ from bisect import bisect_right
 def in_excluded(pos: int, intervals: tuple[list[int], list[int]]) -> bool:
     starts, ends = intervals
     idx = bisect_right(starts, pos) - 1
-    return 0 <= idx and pos <= ends[idx]
+model/{site_name}/                 # per-locus XGBoost models
 ```
+
+## Anomaly Detection for MSI-H
+
+When labeled MSI-H samples are scarce, anomaly detection trains only on MSS samples and flags deviations.
+
+### Mahalanobis Distance (No sklearn)
+
+```python
+class MahalanobisDetector:
+    def fit(self, X_mss, n_sigma=3):
+        self.mean_ = np.mean(X_mss, axis=0)
+        cov = np.cov(X_mss, rowvar=False) + np.eye(n) * 1e-6
+        self.cov_inv_ = np.linalg.inv(cov)
+        dists = [mahalanobis(x, self.mean_, self.cov_inv_) for x in X_mss]
+        self.threshold_ = np.mean(dists) + n_sigma * np.std(dists)
+```
+
+**Relationship to Gaussian**: Mahalanobis distance = negative log-likelihood under multivariate Gaussian. `d²(x) = -2 log p(x) + const`.
+
+### ROC from Scratch
+
+```python
+from scipy.integrate import trapezoid
+sorted_idx = np.argsort(scores)[::-1]
+tps = np.cumsum(y_true[sorted_idx])
+fps = np.cumsum(1 - y_true[sorted_idx])
+tpr = np.concatenate([[0], tps / tps[-1]])
+fpr = np.concatenate([[0], fps / fps[-1]])
+roc_auc = trapezoid(tpr, fpr)
+```
+
+### Key Finding
+
+Coverage features (mean_coverage, std_coverage) dominate Mahalanobis distance, masking MSI signal. **Remove coverage features**, keep only pro_p/pro_q-derived features.
+
+## Cancer Type Stratification
+
+| Cancer | n | MSI-H mean | MSS mean | AUC | Threshold |
+|--------|---|-----------|----------|-----|-----------|
+| CRC | 422 | 14.09% | 6.56% | 0.969 | 8.39% |
+| Endometrial | 130 | 9.47% | 6.46% | 0.912 | 7.24% |
+
+MSS baseline ~6.5% across cancer types. MSI-H signal varies → different thresholds needed.
+
+## Large-Scale File Processing
+
+```python
+# FAST: os.scandir() for 5000+ files
+for entry in os.scandir(result_dir): ...
+
+# SLOW: glob.glob() may timeout on NFS
+```
+
+**Performance**: 100 site.txt ≈ 2-6s, 8000 files ≈ 400-500s.
 
 **Why NOT IntervalTree**: rejects zero-width intervals (single-base BED after conversion). Sorted arrays are cache-friendly for 100M+ queries, `bisect_right` is C-implemented.
 
@@ -435,8 +1083,62 @@ with open(depth_path) as fin, open(output_path, "w") as fout:
         chrom = normalize_chrom(parts[0])
         pos = int(parts[1])
         if not in_excluded(pos, intervals_by_chrom.get(chrom, ([], []))):
-            fout.write(line)
+model/{site_name}/                 # per-locus XGBoost models
 ```
+
+## Anomaly Detection for MSI-H
+
+When labeled MSI-H samples are scarce, anomaly detection trains only on MSS samples and flags deviations.
+
+### Mahalanobis Distance (No sklearn)
+
+```python
+class MahalanobisDetector:
+    def fit(self, X_mss, n_sigma=3):
+        self.mean_ = np.mean(X_mss, axis=0)
+        cov = np.cov(X_mss, rowvar=False) + np.eye(n) * 1e-6
+        self.cov_inv_ = np.linalg.inv(cov)
+        dists = [mahalanobis(x, self.mean_, self.cov_inv_) for x in X_mss]
+        self.threshold_ = np.mean(dists) + n_sigma * np.std(dists)
+```
+
+**Relationship to Gaussian**: Mahalanobis distance = negative log-likelihood under multivariate Gaussian. `d²(x) = -2 log p(x) + const`.
+
+### ROC from Scratch
+
+```python
+from scipy.integrate import trapezoid
+sorted_idx = np.argsort(scores)[::-1]
+tps = np.cumsum(y_true[sorted_idx])
+fps = np.cumsum(1 - y_true[sorted_idx])
+tpr = np.concatenate([[0], tps / tps[-1]])
+fpr = np.concatenate([[0], fps / fps[-1]])
+roc_auc = trapezoid(tpr, fpr)
+```
+
+### Key Finding
+
+Coverage features (mean_coverage, std_coverage) dominate Mahalanobis distance, masking MSI signal. **Remove coverage features**, keep only pro_p/pro_q-derived features.
+
+## Cancer Type Stratification
+
+| Cancer | n | MSI-H mean | MSS mean | AUC | Threshold |
+|--------|---|-----------|----------|-----|-----------|
+| CRC | 422 | 14.09% | 6.56% | 0.969 | 8.39% |
+| Endometrial | 130 | 9.47% | 6.46% | 0.912 | 7.24% |
+
+MSS baseline ~6.5% across cancer types. MSI-H signal varies → different thresholds needed.
+
+## Large-Scale File Processing
+
+```python
+# FAST: os.scandir() for 5000+ files
+for entry in os.scandir(result_dir): ...
+
+# SLOW: glob.glob() may timeout on NFS
+```
+
+**Performance**: 100 site.txt ≈ 2-6s, 8000 files ≈ 400-500s.
 
 ### Multiprocessing Pitfall
 
@@ -449,8 +1151,62 @@ def _worker(depth_path, output_path):
     assert TREES is not None
     ...
 with ProcessPoolExecutor(max_workers=args.workers, initializer=_init_worker, initargs=(trees,)) as pool:
-    pool.submit(_worker, ...)
+model/{site_name}/                 # per-locus XGBoost models
 ```
+
+## Anomaly Detection for MSI-H
+
+When labeled MSI-H samples are scarce, anomaly detection trains only on MSS samples and flags deviations.
+
+### Mahalanobis Distance (No sklearn)
+
+```python
+class MahalanobisDetector:
+    def fit(self, X_mss, n_sigma=3):
+        self.mean_ = np.mean(X_mss, axis=0)
+        cov = np.cov(X_mss, rowvar=False) + np.eye(n) * 1e-6
+        self.cov_inv_ = np.linalg.inv(cov)
+        dists = [mahalanobis(x, self.mean_, self.cov_inv_) for x in X_mss]
+        self.threshold_ = np.mean(dists) + n_sigma * np.std(dists)
+```
+
+**Relationship to Gaussian**: Mahalanobis distance = negative log-likelihood under multivariate Gaussian. `d²(x) = -2 log p(x) + const`.
+
+### ROC from Scratch
+
+```python
+from scipy.integrate import trapezoid
+sorted_idx = np.argsort(scores)[::-1]
+tps = np.cumsum(y_true[sorted_idx])
+fps = np.cumsum(1 - y_true[sorted_idx])
+tpr = np.concatenate([[0], tps / tps[-1]])
+fpr = np.concatenate([[0], fps / fps[-1]])
+roc_auc = trapezoid(tpr, fpr)
+```
+
+### Key Finding
+
+Coverage features (mean_coverage, std_coverage) dominate Mahalanobis distance, masking MSI signal. **Remove coverage features**, keep only pro_p/pro_q-derived features.
+
+## Cancer Type Stratification
+
+| Cancer | n | MSI-H mean | MSS mean | AUC | Threshold |
+|--------|---|-----------|----------|-----|-----------|
+| CRC | 422 | 14.09% | 6.56% | 0.969 | 8.39% |
+| Endometrial | 130 | 9.47% | 6.46% | 0.912 | 7.24% |
+
+MSS baseline ~6.5% across cancer types. MSI-H signal varies → different thresholds needed.
+
+## Large-Scale File Processing
+
+```python
+# FAST: os.scandir() for 5000+ files
+for entry in os.scandir(result_dir): ...
+
+# SLOW: glob.glob() may timeout on NFS
+```
+
+**Performance**: 100 site.txt ≈ 2-6s, 8000 files ≈ 400-500s.
 
 ### Key Pitfalls
 
@@ -500,8 +1256,62 @@ def parse_gtf_gene_coords(gtf_path: str) -> dict:
                 name = m.group(1)
                 if name not in gene_coords or (end-start) > (gene_coords[name][2]-gene_coords[name][1]):
                     gene_coords[name] = (chrom, start, end, strand)
-    return gene_coords
+model/{site_name}/                 # per-locus XGBoost models
 ```
+
+## Anomaly Detection for MSI-H
+
+When labeled MSI-H samples are scarce, anomaly detection trains only on MSS samples and flags deviations.
+
+### Mahalanobis Distance (No sklearn)
+
+```python
+class MahalanobisDetector:
+    def fit(self, X_mss, n_sigma=3):
+        self.mean_ = np.mean(X_mss, axis=0)
+        cov = np.cov(X_mss, rowvar=False) + np.eye(n) * 1e-6
+        self.cov_inv_ = np.linalg.inv(cov)
+        dists = [mahalanobis(x, self.mean_, self.cov_inv_) for x in X_mss]
+        self.threshold_ = np.mean(dists) + n_sigma * np.std(dists)
+```
+
+**Relationship to Gaussian**: Mahalanobis distance = negative log-likelihood under multivariate Gaussian. `d²(x) = -2 log p(x) + const`.
+
+### ROC from Scratch
+
+```python
+from scipy.integrate import trapezoid
+sorted_idx = np.argsort(scores)[::-1]
+tps = np.cumsum(y_true[sorted_idx])
+fps = np.cumsum(1 - y_true[sorted_idx])
+tpr = np.concatenate([[0], tps / tps[-1]])
+fpr = np.concatenate([[0], fps / fps[-1]])
+roc_auc = trapezoid(tpr, fpr)
+```
+
+### Key Finding
+
+Coverage features (mean_coverage, std_coverage) dominate Mahalanobis distance, masking MSI signal. **Remove coverage features**, keep only pro_p/pro_q-derived features.
+
+## Cancer Type Stratification
+
+| Cancer | n | MSI-H mean | MSS mean | AUC | Threshold |
+|--------|---|-----------|----------|-----|-----------|
+| CRC | 422 | 14.09% | 6.56% | 0.969 | 8.39% |
+| Endometrial | 130 | 9.47% | 6.46% | 0.912 | 7.24% |
+
+MSS baseline ~6.5% across cancer types. MSI-H signal varies → different thresholds needed.
+
+## Large-Scale File Processing
+
+```python
+# FAST: os.scandir() for 5000+ files
+for entry in os.scandir(result_dir): ...
+
+# SLOW: glob.glob() may timeout on NFS
+```
+
+**Performance**: 100 site.txt ≈ 2-6s, 8000 files ≈ 400-500s.
 
 ### Pitfalls
 
@@ -514,9 +1324,10 @@ def parse_gtf_gene_coords(gtf_path: str) -> dict:
 
 ## MSI / bMSI Detection
 
-Microsatellite instability detection from tissue (tMSI) and liquid biopsy (bMSI). Covers repeat-length distribution features, weighted entropy, baseline QC chain, Fisher-like scatter metrics, bMSI data simulation (tissue signal injection at low AF), and per-locus XGBoost classifiers.
+Microsatellite instability detection from tissue (tMSI) and liquid biopsy (bMSI). Covers repeat-length distribution features, weighted entropy, baseline QC chain, Fisher-like scatter metrics, bMSI data simulation (tissue signal injection at low AF), per-locus XGBoost classifiers, and msisensor-pro source analysis.
 
-See `references/msi-bmsi-detection.md` for feature engineering formulas, QC thresholds, simulation patterns, prediction workflow, and pitfalls.
+See `references/msi-bmsi-detection.md` for feature engineering formulas, QC thresholds, simulation patterns, prediction workflow, pitfalls, and msisensor-pro algorithm details.
+See `references/msisensor-pro-analysis.md` for msisensor-pro v1.3.0 source code deep-dive: Hunter method, chi-squared+FDR, baseline construction, and comparison with original msisensor.
 
 ---
 
@@ -542,8 +1353,62 @@ Set env vars BEFORE matplotlib import:
 ```python
 _tmp_cache = os.path.join(os.environ.get("TMPDIR", "/tmp"), "matplotlib_cache")
 os.environ.setdefault("MPLCONFIGDIR", _tmp_cache)
-os.environ.setdefault("FONTCONFIG_PATH", os.path.join(_tmp_cache, "fontconfig"))
+model/{site_name}/                 # per-locus XGBoost models
 ```
+
+## Anomaly Detection for MSI-H
+
+When labeled MSI-H samples are scarce, anomaly detection trains only on MSS samples and flags deviations.
+
+### Mahalanobis Distance (No sklearn)
+
+```python
+class MahalanobisDetector:
+    def fit(self, X_mss, n_sigma=3):
+        self.mean_ = np.mean(X_mss, axis=0)
+        cov = np.cov(X_mss, rowvar=False) + np.eye(n) * 1e-6
+        self.cov_inv_ = np.linalg.inv(cov)
+        dists = [mahalanobis(x, self.mean_, self.cov_inv_) for x in X_mss]
+        self.threshold_ = np.mean(dists) + n_sigma * np.std(dists)
+```
+
+**Relationship to Gaussian**: Mahalanobis distance = negative log-likelihood under multivariate Gaussian. `d²(x) = -2 log p(x) + const`.
+
+### ROC from Scratch
+
+```python
+from scipy.integrate import trapezoid
+sorted_idx = np.argsort(scores)[::-1]
+tps = np.cumsum(y_true[sorted_idx])
+fps = np.cumsum(1 - y_true[sorted_idx])
+tpr = np.concatenate([[0], tps / tps[-1]])
+fpr = np.concatenate([[0], fps / fps[-1]])
+roc_auc = trapezoid(tpr, fpr)
+```
+
+### Key Finding
+
+Coverage features (mean_coverage, std_coverage) dominate Mahalanobis distance, masking MSI signal. **Remove coverage features**, keep only pro_p/pro_q-derived features.
+
+## Cancer Type Stratification
+
+| Cancer | n | MSI-H mean | MSS mean | AUC | Threshold |
+|--------|---|-----------|----------|-----|-----------|
+| CRC | 422 | 14.09% | 6.56% | 0.969 | 8.39% |
+| Endometrial | 130 | 9.47% | 6.46% | 0.912 | 7.24% |
+
+MSS baseline ~6.5% across cancer types. MSI-H signal varies → different thresholds needed.
+
+## Large-Scale File Processing
+
+```python
+# FAST: os.scandir() for 5000+ files
+for entry in os.scandir(result_dir): ...
+
+# SLOW: glob.glob() may timeout on NFS
+```
+
+**Performance**: 100 site.txt ≈ 2-6s, 8000 files ≈ 400-500s.
 
 ### Parallel Plotting
 
@@ -561,8 +1426,62 @@ When pchip produces visible plateaus near ceiling (e.g. sensitivity→1.0), use 
 ```python
 z = -np.log(1.0 - np.clip(y, eps, 1.0 - eps))
 z_new = PchipInterpolator(x, z)(x_new)
-y_new = np.clip(1.0 - np.exp(-z_new), 0.0, 1.0)
+model/{site_name}/                 # per-locus XGBoost models
 ```
+
+## Anomaly Detection for MSI-H
+
+When labeled MSI-H samples are scarce, anomaly detection trains only on MSS samples and flags deviations.
+
+### Mahalanobis Distance (No sklearn)
+
+```python
+class MahalanobisDetector:
+    def fit(self, X_mss, n_sigma=3):
+        self.mean_ = np.mean(X_mss, axis=0)
+        cov = np.cov(X_mss, rowvar=False) + np.eye(n) * 1e-6
+        self.cov_inv_ = np.linalg.inv(cov)
+        dists = [mahalanobis(x, self.mean_, self.cov_inv_) for x in X_mss]
+        self.threshold_ = np.mean(dists) + n_sigma * np.std(dists)
+```
+
+**Relationship to Gaussian**: Mahalanobis distance = negative log-likelihood under multivariate Gaussian. `d²(x) = -2 log p(x) + const`.
+
+### ROC from Scratch
+
+```python
+from scipy.integrate import trapezoid
+sorted_idx = np.argsort(scores)[::-1]
+tps = np.cumsum(y_true[sorted_idx])
+fps = np.cumsum(1 - y_true[sorted_idx])
+tpr = np.concatenate([[0], tps / tps[-1]])
+fpr = np.concatenate([[0], fps / fps[-1]])
+roc_auc = trapezoid(tpr, fpr)
+```
+
+### Key Finding
+
+Coverage features (mean_coverage, std_coverage) dominate Mahalanobis distance, masking MSI signal. **Remove coverage features**, keep only pro_p/pro_q-derived features.
+
+## Cancer Type Stratification
+
+| Cancer | n | MSI-H mean | MSS mean | AUC | Threshold |
+|--------|---|-----------|----------|-----|-----------|
+| CRC | 422 | 14.09% | 6.56% | 0.969 | 8.39% |
+| Endometrial | 130 | 9.47% | 6.46% | 0.912 | 7.24% |
+
+MSS baseline ~6.5% across cancer types. MSI-H signal varies → different thresholds needed.
+
+## Large-Scale File Processing
+
+```python
+# FAST: os.scandir() for 5000+ files
+for entry in os.scandir(result_dir): ...
+
+# SLOW: glob.glob() may timeout on NFS
+```
+
+**Performance**: 100 site.txt ≈ 2-6s, 8000 files ≈ 400-500s.
 
 ### Key Pitfalls
 
