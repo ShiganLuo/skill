@@ -8,6 +8,10 @@ triggers:
   - microsatellite instability
   - MSI-H / MSS classification
   - MSI threshold determination
+  - TopMSI baseline or prediction
+  - OncoWESuper QC modules (HomConsistency, PairCheck21, ContEstWES)
+  - sample identity verification (pair check, contamination)
+  - Promega/NCI MSI marker panels
 ---
 
 # MSI Detection
@@ -53,6 +57,45 @@ Output files per sample:
 3. pro → tumor BAM + baseline → MSI status
 4. collect results → merge with metadata → analysis
 ```
+
+## TopMSI Pipeline
+
+TopMSI is a Python-based MSI detection tool using weighted entropy and per-locus thresholds.
+
+```bash
+# Build baseline from labeled MSI-H + MSS samples
+python TopMSI.py build --infile samples.tsv --cancertype 结直肠癌 --output baseline.tsv
+
+# Predict MSI status for new samples
+python TopMSI.py predict --baseline baseline.tsv --samples <dir> --output pred.tsv --cutoff 0.2
+```
+
+Core metric: **weighted entropy** = alt_ratio × Shannon_entropy(non_ref_distribution)
+Per-locus threshold: mean(trimmed_MSS) + 3σ
+MSI score: weighted fraction of loci where entropy > threshold
+Score > 0.2 → MSI-H
+
+See `references/topmsi-baseline-and-predict.md` for full BASELINE_HEADER (23 columns), weight calculation, and key thresholds.
+
+## OncoWESuper QC Modules
+
+Before somatic calling, OncoWESuper runs three sample identity/contamination checks:
+
+1. **HomConsistency**: homozygous site consistency (AF=1 sites in normal, check alt freq in tumor ≥ 0.65)
+2. **PairCheck21**: 21-SNP Pearson correlation with pre-trained distribution model ("21" = SNP count, NOT chr21)
+3. **ContEstWES**: GATK CalculateContamination for cross-contamination estimation
+
+See `references/oncowesuper-qc-modules.md` for implementation details.
+
+## MSI Marker Panels
+
+| Panel | Loci | Method |
+|-------|------|--------|
+| NCI Bethesda | 5 (BAT-25/26, D2S123, D5S346, D17S250) | PCR + capillary electrophoresis |
+| Promega | 5 mono + 2 penta | PCR + capillary electrophoresis |
+| NGS (msisensor-pro/TopMSI) | 500-1000+ | Statistical (chi-squared, entropy) |
+
+See `references/msi-marker-panels.md` for hg19 coordinates.
 
 ## Data Processing Patterns
 
@@ -207,3 +250,6 @@ Cancer type significantly affects MSI detection performance:
 - `references/msisensor-pro-source-analysis.md` — msisensor-pro source code analysis
 - `references/site-txt-format-and-parsing.md` — site.txt column layout and feature extraction
 - `references/modular-pipeline-architecture.md` — pluggable MSI detection pipeline design
+- `references/topmsi-baseline-and-predict.md` — TopMSI BASELINE_HEADER (23 cols), weight calculation, predict workflow, key thresholds
+- `references/oncowesuper-qc-modules.md` — OncoWESuper sample identity & contamination QC: HomConsistency, PairCheck21, ContEstWES
+- `references/msi-marker-panels.md` — Promega, NCI Bethesda, 阅微 marker panel coordinates (hg19)
