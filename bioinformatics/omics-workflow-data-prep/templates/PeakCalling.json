@@ -1,0 +1,39 @@
+{
+    "ROOT_DIR": "",
+    "indir": "",
+    "outdir": "",
+    "logdir": "",
+    "samples": [],
+    "paired_samples": [],
+    "single_samples": [],
+    "ip_samples": [],
+    "input_samples": [],
+    "sample_ip_input_map": {},
+    "genomes": ["mm"],
+    "outfiles": [],
+    "Procedure": {
+        "trim_galore": null,
+        "bowtie2-build": null,
+        "bowtie2": null,
+        "samtools": null,
+        "macs3": null
+    },
+    "Params": {
+        "trim_galore": {"quality": 30},
+        "bowtie2": {},
+        "macs3": {
+            "bw": 200,
+            "pvalue": "1e-5",
+            "genome_size": "mm"
+        }
+    },
+    "genome": {
+        "fasta": "/disk5/luosg/Reference/GENCODE/mouse/GRCm39/GRCm39.primary_assembly.genome.fa",
+        "mm": {
+            "fasta": "/disk5/luosg/Reference/GENCODE/mouse/GRCm39/GRCm39.primary_assembly.genome.fa"
+        },
+        "hg38": {
+            "fasta": "/disk5/luosg/Reference/GENCODE/human/GRCh38/GRCh38.primary_assembly.genome.fa"
+        }
+    }
+}
