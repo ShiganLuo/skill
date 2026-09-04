@@ -1,0 +1,59 @@
+"""Common utilities for all modules.
+
+Include from subworkflow: include: "../modules/common/common.smk"
+Include from module:      include: "../common/common.smk"
+
+Provides:
+  - setup_logger, create_logger (from src/common/LogUtil.py)
+  - time, shutil, os, sys (standard library)
+  - ROOT_DIR (from config)
+"""
+
+import sys
+import os
+import time
+import shutil
+
+# Get ROOT_DIR from config (set by run.py)
+ROOT_DIR = config.get("ROOT_DIR", ".")
+
+# Ensure src directory is in sys.path for importing common modules
+_src_dir = os.path.join(ROOT_DIR, "src")
+if _src_dir not in sys.path:
+    sys.path.insert(0, _src_dir)
+
+# Import common utilities
+try:
+    from common.LogUtil import setup_logger
+except ImportError as e:
+    raise ImportError(
+        f"Failed to import common.LogUtil.setup_logger. "
+        f"Please ensure:\n"
+        f"1. ROOT_DIR is set correctly in config (current: {ROOT_DIR})\n"
+        f"2. Directory exists: {_src_dir}\n"
+        f"3. File exists: {os.path.join(_src_dir, 'common', 'LogUtil.py')}\n"
+        f"Original error: {e}"
+    )
+
+
+def create_logger(logger_name: str, log_file: str, level: int = None) -> "logging.Logger":
+    """Helper to create a logger with common settings.
+
+    Parameters
+    ----------
+    logger_name : str
+        Name for the logger (e.g., rule name).
+    log_file : str
+        Path to the log file.
+    level : int, optional
+        Logging level. Defaults to logging.INFO.
+
+    Returns
+    -------
+    logging.Logger
+        Configured logger instance.
+    """
+    if level is None:
+        import logging
+        level = logging.INFO
+    return setup_logger(logger_name=logger_name, log_file=log_file, level=level)

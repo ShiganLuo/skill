@@ -1,0 +1,47 @@
+{
+  "jobs": [
+    {
+      "id": "8132ecaefe0a",
+      "name": "每日生物医药行业报告",
+      "prompt": "你是生物医药行业研究助手。任务：从东方财富证券研报中心（data.eastmoney.com/report/industry.jshtml）收集最新的生物医药行业研报。\n\n步骤：\n1. 用浏览器打开 data.eastmoney.com/report/industry.jshtml\n2. 用JS提取生物制品、化学制药、医疗器械、医疗服务、医药商业五个行业的最新研报（最近7天的）\n3. 按日期倒序排列，整理成markdown表格格式\n4. 在报告末尾添加\"本周重点关注\"总结（3-7条热点）\n5. 保存到 /home/<USER>/Work/<USER>/work/笔记/Wiki/行业/行业研究/每日行业报告/ 目录，文件名格式为 YYYY-MM-DD.md\n\n报告格式参考：\n# 生物医药行业报告日报 - YYYY-MM-DD\n数据来源：东方财富研究中心\n\n## 一、生物制品（创新药/生物药）\n| 日期 | 机构 | 报告标题 |\n\n## 二、化学制药\n...\n\n## 本周重点关注\n1. ...\n\n---\n生成时间：YYYY-MM-DD HH:MM\n\n注意：用中文回复。如果东方财富访问失败，尝试用curl从其他来源获取。",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "base_url": null,
+      "script": null,
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 9 * * *",
+        "display": "0 9 * * *"
+      },
+      "schedule_display": "0 9 * * *",
+      "repeat": {
+        "times": null,
+        "completed": 41
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-06-21T23:28:22.764636+08:00",
+      "next_run_at": "2026-09-04T09:00:00+08:00",
+      "last_run_at": "2026-09-03T09:02:31.112602+08:00",
+      "last_status": "error",
+      "last_error": "RuntimeError: Connection error.",
+      "last_delivery_error": null,
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": [
+        "browser",
+        "file"
+      ],
+      "workdir": null,
+      "fire_claim": null,
+      "failure_streak": 1
+    }
+  ],
+  "updated_at": "2026-09-03T09:02:31.112987+08:00"
+}
