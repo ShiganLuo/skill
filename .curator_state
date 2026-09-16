@@ -1,9 +1,9 @@
 {
-  "last_report_path": "/home/luoshg_15179660974/.hermes/logs/curator/20260609-065247",
-  "last_run_at": "2026-06-17T07:26:54.332757+00:00",
-  "last_run_duration_seconds": 557.632234,
-  "last_run_summary": "auto: no changes",
+  "last_report_path": "/home/luosg/.hermes/logs/curator/20260913-134243",
+  "last_run_at": "2026-09-13T13:42:43.065229+00:00",
+  "last_run_duration_seconds": 0.69061,
+  "last_run_summary": "auto: no changes; llm: skipped (consolidation off)",
   "last_run_summary_shown_at": null,
   "paused": false,
-  "run_count": 3
+  "run_count": 11
 }

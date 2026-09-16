@@ -1,5 +1,17 @@
 # Batch Operations in Obsidian Vault
 
+## Long-running batch tasks (user preference)
+
+This user has low patience for repeated plan-and-confirm cycles when they have already given an execution task. They explicitly correct this pattern:
+
+- **Don't repeat the plan** — they already gave one (e.g. "translate each paper"). Just do it.
+- **Don't ask for permission** on scope decisions (which papers, in what order, how many) — pick a sensible default and proceed. State the default in one line so they can override.
+- **Don't surface "we should discuss this first"** before starting. The first response after a batch task should be execution, not clarification.
+- **Self-manage context**: write a progress file (`_translation_progress.md` or similar) with checkboxes before starting. Stop at the first quality cliff. Don't ask the user "should I stop?" or "do you want a status update?" — write the progress file and report.
+- **Don't recap the problem** at length before each unit of work. One line of "now doing N" is enough.
+
+The contrast to remember: the user does want pre-execution review for **design / architectural decisions** (e.g. "design the schema before implementing" — see User profile). Batch-execute tasks are different: just go.
+
 ## Batch file updates via execute_code
 
 When updating many vault files at once (e.g., filling in templates for 30+ company notes), use `execute_code` with `patch()` from `hermes_tools`.

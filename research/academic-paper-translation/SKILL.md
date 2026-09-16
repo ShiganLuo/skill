@@ -130,3 +130,48 @@ For generating Chinese academic theses (硕士/博士论文) as .docx files, see
 7. **Formula rendering**: Check that `$` and `$$` are properly paired. Inline math like `$\alpha = \beta = 10$` not `$\alpha$ = $\beta$ = 10.
 8. **Table translation**: When translating tables, preserve the original structure. Use markdown tables for simple data. Keep numeric data, p-values, and statistical annotations in their original form. Translate only the row/column headers and descriptive text.
 9. **Long papers**: For papers >10 pages, the full translation of all sections (abstract through methods) can be very large. Write the entire translation in one `execute_code` call — do NOT split across multiple terminal calls.
+10. **Wrong SQL in `_translation_progress.md` examples**: The example `WHERE itemData.fieldID = 64` is broken in user's actual Zotero DB — returns no citekey rows. The verified-working query binds citekey as a parameter against `itemDataValues.value` directly:
+    ```python
+    cur.execute("""
+        SELECT id.itemID, ia.parentItemID, ia.path
+        FROM itemData id
+        JOIN itemDataValues v ON id.valueID = v.valueID
+        JOIN itemAttachments ia ON ia.parentItemID = id.itemID
+        WHERE v.value = ? AND ia.path LIKE '%.pdf'
+    """, (citekey,))
+    ```
+    When delegating PDF lookup to a subagent, **always tell it the working query upfront** — never make it rediscover the workaround.
+11. **Concurrent subagent dispatch >2 → silent partial failure**: `delegate_task` with 4 concurrent leaf subagents each running 5 papers caused 18/20 papers to silently fail — only 2 of 20 PDFs produced output files. The subagents reported `dispatched` status and then the orchestrator received no completion messages (only the first subagent timed out at 420s). The remaining files were never written and no error surfaced.
+    - **Limit concurrent subagents to 2**, each with ≤3 papers
+    - **Always re-stat files in the orchestrator after subagents finish** — subagent self-reports are not trustworthy for file existence (they may claim "all done" while some files are missing)
+    - **Verify on disk before claiming batch complete**: glob the target dir after each batch, check `os.path.getsize(p) > 5_000` per file, only then dispatch the next batch
+12. **Progress file mutation timing**: Subagents must `write_file` each translated note first, then `stat` verify, and only after ALL papers in their batch are confirmed on disk, append to `_translation_progress.md` once at the end. Per-paper progress-line edits invite race conditions when multiple subagents share the same progress file.
+13. **`_translation_progress.md` is NOT a reliable source of truth for current progress**. Its header counts ("已完成 (N 篇)", "待翻译 M 篇") and `[x] @citekey` markers lag reality by hundreds of papers because (a) subagents may write the .md but fail to append the progress line, (b) human manual edits to Obsidian skip the progress file entirely, (c) earlier sessions left stale section headers. Real progress is **derived**, not read. The canonical formula:
+    - **Total corpus** = unique citekeys in `My Library.bib` (`grep -E '^@\w+\{' ... | sed -E 's/^@\w+\{//; s/,$//'`)
+    - **Actually translated** = `@citekey.md` files present in Obsidian notes dir (`ls @*.md`)
+    - **Genuinely remaining** = `comm -23 <bib_keys> <obsidian_keys>` — typically 0-10 citekeys once a corpus is "done"
+    - **Orphan notes** = `comm -13 <obsidian_keys> <bib_keys>` — citekey was renamed (a→b suffix), deleted, or never existed; flag for cleanup, don't translate
+    - The script [scripts/translation-status.sh](scripts/translation-status.sh) computes all three numbers in one shot. Run it before answering any "what's the translation progress?" question.
+
+## Verification Contract (Orchestrator-Side)
+
+After each batch of subagents reports completion, the orchestrator MUST verify on disk before claiming success to the user:
+
+```python
+import os
+notes_dir = '/home/luosg/Work/luosg/work/笔记/Wiki/文献阅读笔记/文献/'
+for ck in batch:
+    p = os.path.join(notes_dir, f'@{ck}.md')
+    assert os.path.exists(p), f'missing: {ck}'
+    assert os.path.getsize(p) > 5000, f'too small ({os.path.getsize(p)} B): {ck}'
+    with open(p) as f:
+        head = f.read(200)
+    assert head.startswith('---'), f'no frontmatter: {ck}'
+    assert '### 摘要' in head, f'no summary heading: {ck}'
+```
+
+If verification fails for any paper, redispatch that specific citekey as a single-paper task (not a batch) — do not retry the whole batch.
+
+## Templates
+
+For the working PDF-lookup SQL and the progress-file schema, see [references/zotero-pdf-lookup.md](references/zotero-pdf-lookup.md).

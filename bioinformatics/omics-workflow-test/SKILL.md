@@ -64,22 +64,33 @@ No inheritance, no merging, no override mechanism. Each workflow is self-contain
 
 # Path injection flow
 
-1. `setup_test_args` loads SchemaValidator, calls `generate_test_paths()` → `args._test_base_paths`
-2. `execute_workflows` per-workflow:
-   a. Loads workflow config JSON
-   b. Detects genome structure (flat vs nested)
-   c. Injects schema-known paths
-   d. **Fallback**: for config fields NOT in schema, uses `_is_path_like(val)` heuristic
+1. `setup_test_args` sets `sv._schema_dir` to config directory, calls `generate_test_paths()` → `args._test_base_paths`
+2. `execute_workflows` per-workflow: recursive `_inject()` walks ENTIRE config dict
 
 ```python
-# Fallback for fields not in schema
-for field, val in genome_cfg.items():
-    base_key = f"genome.{field}"
-    if base_key in base_paths:          # schema knows this field
-        wf_extra[base_key] = base_paths[base_key]
-    elif _is_path_like(val):            # fallback: config value looks like a path
-        wf_extra[base_key] = _resolve_test_path(field, test_data, genome)
+def _is_path(val):
+    if val is None: return True
+    if not isinstance(val, str): return False
+    if "/" in val: return True
+    return False
+
+def _inject(cfg, prefix, wf_extra):
+    """Recursively inject test paths for ALL path-like fields."""
+    for field, val in cfg.items():
+        dotted = f"{prefix}.{field}" if prefix else field
+        if isinstance(val, dict):
+            _inject(val, dotted, wf_extra)
+        elif _is_path(val):
+            wf_extra[dotted] = base_paths.get(dotted, _make_test_path(field, test_data, genome))
+
+# Per-workflow:
+wf_extra = {}
+_inject(workflow_config, "", wf_extra)
 ```
+
+**Why recursive:** Handles ALL nesting (top-level, genome.*, genome.GRCm39.*, Params.*, Procedure.*) without manual flat-vs-nested branching.
+
+**Why `_is_path` fallback:** New workflows may have fields not in any schema. Heuristic (null or contains "/") catches them.
 
 # Nested genome injection (CoCulture)
 
@@ -135,11 +146,10 @@ assests/test/
 # Pitfalls
 
 1. SE samples in meta: fastq_2 MUST be a non-existent placeholder path (not empty/NaN)
-2. In test mode, conda-prefix is auto-set to `{output_dir}/.conda` (local). In
-   normal mode, `--conda-prefix` is required when `--sdm` is absent (default None,
-   not a foreign path). When `--sdm apptainer` is set, conda is omitted entirely.
+2. conda-prefix must be local (not /data/...) to avoid PermissionError
 3. Snakemake 9.x required for conda: + run: compatibility
 4. Test summary must show ALL results, not crash on first failure
 5. Output goes to `{cwd}/test/` (or `{--output-dir}/test/`), NOT root_dir
-6. Schema is NOT the only source of truth — fallback to config value heuristics
+6. Schema is NOT the only source of truth — fallback to `_is_path()` heuristic for new fields
 7. Nested genome detection uses `re.match(r'^[A-Za-z]+[0-9]+$', k)` (matches GRCm39, GRCh38)
+8. Inject ALL path fields recursively (genome.*, Params.*, Procedure.*), not just genome.*

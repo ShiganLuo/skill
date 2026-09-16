@@ -96,10 +96,29 @@ print('Workflow PASSED')
 **Pitfall**: PyPI-only containers (uv template) have no `conda` command. Use `python3 -c "import pkg"` instead of `conda env list` to verify those.
 
 See `references/scrna-package-mapping.md` for R→Python package name translations when adding scRNA-seq packages to conda YAML.
+See `references/r-script-pdf-output.md` for adding `--format` flag to R scripts with ggsave or explicit device calls.
+See `references/snakefile-configurable-paths.md` for making hardcoded BAM paths configurable in Snakemake modules.
 
 ## Cell Ranger GTF Biotype Compatibility
 
 Cell Ranger mkref filters GTF by biotype using `gene_type`/`transcript_type` (GENCODE format). Ensembl GTFs use `gene_biotype`/`transcript_biotype` instead, causing 0 genes to pass the filter. See `references/cellranger-gtf-biotype.md` for the fix.
+
+## Runtime Execution Pitfalls
+
+**`--no-home` prevents host environment pollution** — By default, Apptainer bind-mounts the host's `$HOME` into the container. This means the host's R library (`~/R/library`), Python user packages (`~/.local/lib`), conda configs (`~/.conda`), and other per-user state leak into the container. For R containers, this causes `BiocGenerics`/`MatrixGenerics` version conflicts where packages exist in the container but `requireNamespace()` returns FALSE because the host's stale library is searched first.
+
+**Symptom**: `requireNamespace("DESeq2")` fails with `object 'colMeans' is not exported by 'namespace:MatrixGenerics'` even though DESeq2 IS installed in the container. Check `Rscript -e 'cat(.libPaths(), sep="\n")'` — if the host's R library path appears before the container's, that's the cause.
+
+**Rule**: Always use `--no-home` when running Apptainer containers for bioinformatics workflows:
+```bash
+apptainer exec --no-home \
+  -B /home/luosg/Data:/home/luosg/Data \
+  -B /home/luosg/Database:/home/luosg/Database \
+  /path/to/container.sif \
+  bash /path/to/script.sh
+```
+
+**Do NOT rebuild the container** when seeing "missing package" errors — always check `.libPaths()` and host pollution first. If the container has been used successfully before, the issue is almost certainly host environment leakage, not a broken container.
 
 ## Key Pitfalls
 
