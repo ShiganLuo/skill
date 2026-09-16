@@ -1,140 +1,353 @@
 # ncRNAseq: Three-Pass STAR Alignment for Small RNA
 
-Reference for small RNA-seq analysis using three-pass STAR alignment.
+Reference implementation for small RNA-seq analysis using a three-pass STAR alignment strategy. Based on canonical small RNA gene quantification methods.
 
-## Two aligner routes
+## When to use
 
-### 1. star_3pass (canonical small RNA)
+- ncRNAseq workflow with `aligner: "star_3pass"` in config
+- Small RNA-seq data where canonical small RNAs (U1, U2, U3, 7SL, 7SK) need accurate quantification
+- When multimapping small RNA reads need special handling to avoid mis-mapping to variant genes
 
-```
-genome module:
-    GTF -> extract_smallrna -> BED + FASTA(±50bp)
-    FASTA -> star_index (sjdbOverhang=0) -> smallRNA STAR index
-
-Trim Galore
-    -> STAR pass1 (genome, relaxed, multimap 1000)
-        -> bedtools intersect + samtools sort -n + fastq -> SE FASTQ
-            -> STAR pass2 (smallRNA FASTA, EndToEnd, clip 20bp)
-                -> samtools view -F 4 -> mapped SE FASTQ -> STAR pass3a (genome, strict)
-                    -> bedtools intersect -> canonical BAM
-                -> samtools view -f 4 -> unmapped SE FASTQ -> STAR pass3b (genome, strict)
-                    -> samtools merge (canonical + noncanonical) -> featureCounts (SE mode)
-```
-
-### 2. star_3pass_gene (per-gene re-alignment, Ma et al 2024)
+## Pipeline DAG
 
 ```
-Trim Galore + Subsample + Hard clip
-    -> STAR pass1 (genome, EndToEnd, 5' hard clip 10nt via clip5pNbases "10 0")
-        -> bedtools intersect (per gene) + samtools fastq -> per-gene FASTQ
-            -> STAR pass2 (smallRNA FASTA index, Local alignment, per-gene)
-                -> samtools merge (all per-gene BAMs) -> sample BAM
-                    -> featureCounts + Tailer (global mode)
+demultiplexer (jla-trim: 3' adapter removal + PCR dedup)
+    → cutadapt trim (Trim Galore)
+        → subsample (seqtk: abundant RNAs → 100k reads, others symlink pass-through)
+        → genome module:
+            GTF → extract_smallrna (Python script) → BED + FASTA(±50bp)
+            FASTA → star_index (reuses star module, conditional gtf) → smallRNA STAR index
+        → STAR pass1 (genome, relaxed: --outFilterMultimapNmax 1000 --alignIntronMin 9999999)
+            → bedtools intersect + samtools fastq -1/-2 (extract smallRNA reads → paired-end FASTQ)
+                → STAR pass2 (canonical smallRNA FASTA, EndToEnd, clipped 20bp, outReadsUnmapped Fastx)
+                    → star_3p_pass2_to_fq (samtools sort -n | samtools fastq → mapped reads FASTQ)
+                        → STAR pass3a (genome, strict: mismatch 0.025, Local)
+                            → bedtools intersect (extract canonical smallRNA reads)
+                    → star_3p_pass2_unmapped (gzip unmapped FASTQ)
+                        → STAR pass3b (genome, strict: same as pass3a)
+                    → samtools merge (pass3a canonical + pass3b)
+                        → Tailer (global alignment mode, GTF annotation)
+                            → {sample_id}_tail.csv (gene-specific 3' end info)
 ```
 
-Key differences from star_3pass:
-1. Pass 1: EndToEnd (not relaxed Local), 5' hard clip 10 nt for post-transcriptional modification tolerance
-2. No pass2/pass3a/pass3b split: reads grouped by gene, re-aligned individually to smallRNA FASTA index using Local alignment
-3. Per-gene FASTQ extraction: bedtools intersect per gene interval, samtools fastq per gene
-4. Merge: all per-gene BAMs merged into sample BAM (not canonical+noncanonical)
+## Architecture
 
-## star_3pass.smk rules
+**Module reuse (NOT inline rules):**
+- `modules/star/star.smk` — `star_align` rule imported 4 times (pass1/pass2/pass3a/pass3b) with different configs
+- `modules/star/star_3pass/star_3pass.smk` — auxiliary rules (extract_smallrna, pass2_to_fq, pass2_unmapped, pass3a_extract, merge)
+- `modules/genome/genome.smk` — `extract_smallrna` rule (Python script: GTF → BED → FASTA)
+- `modules/star/star.smk` — `star_index` rule reused for smallRNA index (gtf=None)
+- `modules/tailer/tailer.smk` — Tailer 3' end analysis (global alignment mode)
 
-| Rule | Purpose |
-|------|---------|
-| `star_3p_extract_smallrna` | pass1 BAM -> bedtools intersect -> SE FASTQ |
-| `star_3p_pass2_mapped_to_fq` | pass2 BAM -> mapped SE FASTQ for pass3a |
-| `star_3p_pass2_unmapped_to_fq` | pass2 BAM -> unmapped SE FASTQ for pass3b |
-| `star_3p_pass3a_extract` | pass3a BAM -> bedtools intersect -> canonical BAM |
-| `star_3p_merge` | canonical + noncanonical -> merged BAM |
-
-## star_3pass_gene.smk rules
-
-| Rule | Purpose |
-|------|---------|
-| `star_3pg_extract_per_gene` | pass1 BAM -> bedtools intersect per gene -> per-gene FASTQ.gz |
-| `star_3pg_align_per_gene` | per-gene FASTQ -> STAR Local alignment to smallRNA index -> per-gene BAM |
-| `star_3pg_merge` | all per-gene BAMs -> samtools merge -> sample BAM + index |
-
-Module file: `modules/star/star_3pass/star_3pass_gene.smk` (shares `star_3pass.yaml`)
-
-## Config pattern
-
+**Subworkflow structure:**
 ```python
-# CRITICAL: define derived paths BEFORE config dicts (pitfall #61)
-smallrna_bed = f"{outdir}/genome/smallrna/smallrna_genes.bed"
-smallrna_fasta = f"{outdir}/genome/smallrna/smallrna_genes_flank.fa"
-smallrna_star_index = f"{outdir}/genome/smallrna/index"
+# In subworkflow/ncRNAseq.smk, star_3pass branch:
 
-# Auto-build genome STAR index when star_index_dir is null
-# MUST be BEFORE pass configs that capture star_index_dir
-if not star_index_dir:
-    star_genome_idx_config = {
-        "ROOT_DIR": ROOT_DIR, "outdir": f"{outdir}/genome", "logdir": logdir,
-        "Procedure": {"STAR": STAR}, "Params": {"STAR": {}},
-        "genome": {"fasta": genome_fasta, "gtf": config.get("genome", {}).get("gtf")}
-    }
-    module star_genome_idx:
-        snakefile: "../modules/star/star.smk"
-        config: star_genome_idx_config
-    use rule star_index from star_genome_idx as ncRNAseq_star_index_genome
-    star_index_dir = f"{outdir}/genome/index"
+# 1. Import genome module for smallRNA extraction
+module genome_sm:
+    snakefile: "../modules/genome/genome.smk"
+    config: genome_sm_config
+use rule extract_smallrna from genome_sm as ncRNAseq_extract_smallrna
 
-# pass2/3a/3b all SE
-star_pass2_config = {
-    "paired_samples": [],
-    "single_samples": paired_samples + single_samples,
-    "genome": {"fasta": smallrna_fasta, "index_dir": smallrna_star_index}
-}
-# featureCounts SE mode
-fc_paired = [] if aligner == "star_3pass" else paired_samples
-fc_single = paired_samples + single_samples if aligner == "star_3pass" else single_samples
+# 2. Import star module for smallRNA STAR index (reuses star_index rule)
+module star_smallrna_idx:
+    snakefile: "../modules/star/star.smk"
+    config: star_smallrna_idx_config
+use rule star_index from star_smallrna_idx as ncRNAseq_star_index_smallrna
+
+# 3. Import star module 4 times for each pass
+module star_pass1: snakefile: "../modules/star/star.smk", config: star_pass1_config
+module star_pass2: snakefile: "../modules/star/star.smk", config: star_pass2_config
+module star_pass3a: snakefile: "../modules/star/star.smk", config: star_pass3a_config
+module star_pass3b: snakefile: "../modules/star/star.smk", config: star_pass3b_config
+
+# 4. Import star_3pass sub-module for auxiliary rules
+module star_3pass:
+    snakefile: "../modules/star/star_3pass/star_3pass.smk"
+    config: star_3pass_config
+
+# 5. Import Tailer for 3' end analysis
+module tailer:
+    snakefile: "../modules/tailer/tailer.smk"
+    config: tailer_config
 ```
 
-## star_3pass_gene config
+## Required config keys
 
 ```json
-"star_3pass_gene": {
-    "pass1": {
-        "outFilterMultimapNmax": 1000,
-        "alignIntronMin": 9999999,
-        "outFilterMultimapScoreRange": 0,
-        "outFilterMismatchNoverLmax": 0.2,
-        "alignEndsType": "EndToEnd",
-        "clip5pNbases": "10 0"
+{
+    "Procedure": {
+        "aligner": "star_3pass",
+        "STAR": "STAR",
+        "samtools": "samtools",
+        "bedtools": "bedtools",
+        "featureCounts": "featureCounts"
+    },
+    "Params": {
+        "star_3pass": {
+            "pass1": {"outFilterMultimapNmax": 1000, "alignIntronMin": 9999999, ...},
+            "pass2": {"alignEndsType": "EndToEnd", "clip5pNbases": "20 0", ...},
+            "pass3": {"outFilterMismatchNoverLmax": 0.025, "alignEndsType": "Local", ...}
+        },
+        "ncRNAseq": {
+            "smallrna_types": ["miRNA", "snRNA", "snoRNA", "rRNA", "misc_RNA", "scRNA", "scaRNA", "vaultRNA"],
+            "smallrna_flank": 50
+        },
+        "tailer": {
+            "read": 2,
+            "threshold": 100,
+            "rev_comp": false
+        }
+    },
+    "genome": {
+        "fasta": "genome.fa",
+        "gtf": "gencode.v47.annotation.gtf",
+        "star_index_dir": "/path/to/genome_star_index"
     }
 }
 ```
 
-## smallrna_types for paper-specified sncRNAs
+Note: `smallrna_fasta`, `smallrna_bed`, `smallrna_star_index` are generated by the genome module at runtime — they do NOT need to be in the config JSON.
 
-Paper specifies: snRNA, misc_RNA, rRNA, rRNA_pseudogene, snoRNA, scaRNA, ribozyme, TERC
-(NOT miRNA, scRNA, vaultRNA). Config: `Params.ncRNAseq.smallrna_types`.
+## STAR parameters per pass
 
-## align_bam_dir pattern for downstream modules
+All parameters read from `config.Params.star_3pass.pass1/pass2/pass3` with `.get(key, default)` fallback:
 
-featureCounts and Tailer indir must be resolved per-aligner:
-```python
-if aligner == "star_3pass":
-    align_bam_dir = f"{outdir}/common/3_raw_bam/final_bam"
-elif aligner == "star_3pass_gene":
-    align_bam_dir = f"{outdir}/common/3_raw_bam/per_gene"
-else:
-    align_bam_dir = f"{outdir}/common/3_raw_bam"
-```
+| Parameter | Pass 1 | Pass 2 | Pass 3a/3b |
+|-----------|--------|--------|------------|
+| outFilterMultimapNmax | 1000 | 1000 | 1000 |
+| alignIntronMin | 9999999 | 9999999 | 9999999 |
+| outFilterMultimapScoreRange | 0 | 0 | 0 |
+| outFilterMismatchNoverLmax | 0.2 | 0.2 | 0.025 |
+| outFilterMismatchNoverReadLmax | — | 0.05 | — |
+| alignEndsType | default | EndToEnd | Local |
+| clip5pNbases | — | 20 0 | — |
+| clip3pNbases | — | 0 20 | — |
+| alignMatesGapMax | — | 500 | 500 |
+| outReadsUnmapped | — | Fastx | — |
 
 ## Pitfalls
 
-1. **sjdbOverhang=0** when no GTF - STAR fatal error otherwise
-2. **Python dict value capture** - define derived paths BEFORE config dicts
-3. **star_index output** - `directory(outdir)` not `directory(outdir + "/index")`
-4. **Input paths** - use `.bam` not `.Aligned.sortedByCoord.out.bam`
-5. **include path** - `../../common/common.smk` (two levels up)
-6. **BAM->FASTQ rules needed** - STAR `outReadsUnmapped` only gives unmapped
-7. **featureCounts SE mode** - merged BAM is single-end
-8. **samtools sort -n** before `samtools fastq`
-9. **Genome index MissingInputException** - `use rule star_align` only imports `star_align`, not `star_index`. Must also import `star_index` when `star_index_dir` is null. See skill pitfall #48.
-10. **All passes share one genome index** - create ONE `star_genome_idx` module, not one per pass. Pass2 uses separate smallRNA index.
-11. **star_3pass_config missing comma (pre-existing bug, fixed)** - ncRNAseq.smk line 412 had `"pass2_outdir": star_pass2_config["outdir"]` without trailing comma before `"logdir"`. Causes SyntaxError at parse time. Always check for missing commas in multi-line config dicts.
-12. **align_bam_dir pattern** - featureCounts and Tailer indir must be resolved per-aligner (see above), not hardcoded to `common/3_raw_bam`.
-13. **star.smk clip5pNbases limitation** - The `star_align` rule in `star.smk` has a fixed parameter list and does NOT natively pass `clip5pNbases` to STAR. For `star_3pass_gene` pass1 to apply the 5' hard clip, verify the STAR log output shows `clip5pNbases` was applied, or extend `star.smk` to pass it.
+1. **samtools sort -n before fastq** — `samtools fastq` requires name-sorted input. Use `samtools sort -n` before piping to `samtools fastq`.
+
+2. **Empty unmapped file** — pass2 may produce no unmapped reads. Pass3b rule should handle empty input gracefully (create empty BAM header).
+
+3. **star_index with gtf=None** — The `star_index` rule uses `if params.gtf:` to conditionally add `--sjdbGTFfile`. When building smallRNA index, pass `gtf: None` in config.
+
+4. **Config key case sensitivity** — Module reads `config.get("Procedure", {}).get("samtools")` (lowercase). Subworkflow must pass `"samtools": SAMTOOLS` not `"SAMTOOLS": SAMTOOLS`.
+
+5. **Python script for GTF parsing** — Use `modules/genome/bin/extract_smallrna.py` instead of inline awk. The script handles GTF attribute parsing properly and supports `--types` for configurable gene_type filtering.
+
+6. **Variable assignment ordering — smallRNA paths BEFORE config dicts** — `smallrna_fasta`, `smallrna_bed`, `smallrna_star_index` are read from config as `None` at the top of the subworkflow (line 81-83), then re-assigned with actual paths inside the `elif aligner == "star_3pass":` branch. BUT the `star_pass2_config` dict is defined BEFORE the re-assignment. If the dict references `smallrna_fasta` (which is still `None`), the star module gets `fasta=None` → `RuleException: Input and output files have to be specified as strings`. **Fix:** Move the three derived path assignments to the TOP of the `star_3pass` branch, BEFORE any config dict definitions:
+    ```python
+    elif aligner == "star_3pass":
+        # MUST come first — before any config dict uses these
+        smallrna_bed = f"{outdir}/genome/smallrna/smallrna_genes.bed"
+        smallrna_fasta = f"{outdir}/genome/smallrna/smallrna_genes_flank.fa"
+        smallrna_star_index = f"{outdir}/genome/smallrna/index"
+        # THEN define config dicts...
+    ```
+
+7. **star_3pass.smk include path** — `star_3pass.smk` lives at `modules/star/star_3pass/` (one level deeper than `star.smk`). Its `include:` must use `../../common/common.smk` (two levels up), NOT `../common/common.smk`. Wrong path → `FileNotFoundError: No such file or directory`.
+
+8. **STAR output naming mismatch** — `star_align` in `star.smk` produces `{sample_id}.bam` (it MOVES the intermediate `.Aligned.sortedByCoord.out.bam` to `.bam`). The `star_3pass.smk` auxiliary rules must reference `*.bam`, NOT `*.Aligned.sortedByCoord.out.bam`. The `.Aligned.sortedByCoord.out.bam` pattern is ONLY valid for intermediate STAR output before the `mv` step.
+
+9. **get_star_index os.path.exists fails during dry-run** — `get_star_index()` checks `os.path.exists(star_index_dir + "/Genome")`. During `--dry-run`, no files exist yet, so the check always fails and falls back to `outdir + "/index"` (triggering an unnecessary `star_index` rebuild). **Fix:** Remove the existence check — always return `index_dir` if set. Snakemake handles dependency resolution:
+    ```python
+    def get_star_index(wildcards):
+        star_index_dir = config.get('genome',{}).get('index_dir') or None
+        if star_index_dir:
+            return star_index_dir  # NO os.path.exists check
+        return outdir + "/index"
+    ```
+
+10. **star_index output = outdir + "/index"** — The `star_index` rule outputs `directory(outdir + "/index")`. When building a smallRNA index with `star_smallrna_idx_config`, set `outdir` to the PARENT directory (e.g. `{outdir}/genome/smallrna`), NOT the index directory itself. Otherwise the output becomes `genome/smallrna/star_index/index` (double nesting). **Correct:**
+    ```python
+    star_smallrna_idx_config = {
+        "outdir": f"{outdir}/genome/smallrna",  # parent dir
+    }
+    # star_index output → genome/smallrna/index
+    # smallrna_star_index → genome/smallrna/index  (must match!)
+    ```
+
+11. **STAR unmapped reads must be declared as outputs** — `star_align` with `--outReadsUnmapped Fastx` produces `*.Unmapped.out.mate1/2` as side effects. If these aren't declared as rule outputs, downstream rules (pass2_to_fq, pass2_unmapped) can't track them. **Fix:** Add `unmapped_r1`/`unmapped_r2` as additional outputs of `star_align`, and `touch` them in the run block if STAR didn't produce them:
+    ```python
+    output:
+        bam = outdir + "/{sample_id}/{sample_id}.bam",
+        bai = outdir + "/{sample_id}/{sample_id}.bam.bai",
+        unmapped_r1 = outdir + "/{sample_id}/{sample_id}.Unmapped.out.mate1",
+        unmapped_r2 = outdir + "/{sample_id}/{sample_id}.Unmapped.out.mate2",
+    # In run block, after STAR:
+    f.write(f"test -f {output.unmapped_r1} || touch {output.unmapped_r1}\n")
+    f.write(f"test -f {output.unmapped_r2} || touch {output.unmapped_r2}\n")
+    ```
+
+12. **pass2 BAM → FASTQ conversion required for pass3a/3b** — pass3a needs canonical reads from pass2 as FASTQ, pass3b needs unmapped reads as FASTQ. These intermediate rules are MISSING from the base pipeline. Add `star_3p_pass2_to_fq` (samtools sort -n | samtools fastq -1/-2) and `star_3p_pass2_unmapped` (gzip STAR unmapped output) to `star_3pass.smk`. Update pass3a/3b `indir` to point to these new output dirs:
+    ```python
+    # pass3a indir = common/3_raw_bam/pass2_mapped_fq (output of star_3p_pass2_to_fq)
+    # pass3b indir = common/3_raw_bam/pass2_unmapped_fq (output of star_3p_pass2_unmapped)
+    ```
+    The `star_3p_pass2_to_fq` rule needs `pass2_outdir` from the star_3pass config to reference the pass2 BAM.
+
+13. **extract rule must produce paired-end FASTQ** — `star_3p_extract_smallrna` converts name-sorted BAM to FASTQ. For PE data, use `samtools fastq -1 r1.fq.gz -2 r2.fq.gz` (NOT single-file pipe to gzip). Output filenames must match STAR's expected `{sample_id}_1.fq.gz` / `{sample_id}_2.fq.gz` pattern. A single `{sample_id}.smallrna.fq.gz` causes STAR pass2 to fail with MissingInputException.
+
+14. **outfiles path must match star_align output** — `run.py` generates `outfiles` with `{sample_id}.bam`. The `star_align` rule outputs `{sample_id}.bam`. If `outfiles` is manually edited to `.Aligned.sortedByCoord.out.bam`, the DAG only contains `all` with no downstream rules (silent failure on dry-run when files exist, MissingInputException when they don't). Always regenerate `raw.json` via `run.py` after changing output patterns.
+
+15. **pass2 indir must match extract rule output** — `star_pass2_config.indir` must point to where `star_3p_extract_smallrna` outputs its FASTQ files. The extract rule outputs to `star_3pass_config.outdir + "/pass1_extract/"` (which resolves to `common/3_raw_bam/pass1_extract/`). A common mistake is setting pass2 indir to `ncRNAseq/bam/pass1_extract` (wrong path). **Fix:** Set `star_pass2_config.indir = f"{outdir}/common/3_raw_bam/pass1_extract"`.
+
+16. **Snakemake rejects functions in output:** Snakemake only allows functions/lambdas in `input:`, NOT in `output:`. Attempting `output: unmapped = lambda wc: ...` raises `RuleException: Only input files can be specified as functions`. For conditional outputs, always declare them statically and `touch` if not produced (see pitfall #11).
+
+17. **raw.json regenerated by run.py overwrites manual edits** — `run.py` calls `run<Workflow>()` which writes `raw.json` from scratch each time. Manual additions to `outfiles` or `Params` (e.g., tailer, demultiplexer) are lost. **Fix:** After adding new steps, update BOTH the `run<Workflow>()` function in `run.py` AND the raw.json. Or add the new outfiles/params programmatically after run.py generates the base JSON.
+
+## Tailer integration (3' end analysis)
+
+Tailer (`jla-tailer` pip package) performs gene-specific 3' end tailing analysis on non-polyadenylated RNAs using global alignment mode.
+
+**Module:** `modules/tailer/tailer.smk` + `tailer.yaml`
+
+**Usage in subworkflow:**
+```python
+tailer_config = {
+    "ROOT_DIR": ROOT_DIR,
+    "indir": f"{outdir}/common/3_raw_bam",  # merged BAM from star_3p_merge
+    "outdir": f"{outdir}/ncRNAseq/tailer",
+    "logdir": logdir,
+    "paired_samples": paired_samples,
+    "single_samples": single_samples,
+    "Params": {"tailer": config.get("Params", {}).get("tailer", {})},
+    "genome": {"gtf": config.get("genome", {}).get("gtf")}
+}
+module tailer:
+    snakefile: "../modules/tailer/tailer.smk"
+    config: tailer_config
+use rule tailer_global from tailer as ncRNAseq_tailer_global
+```
+
+**Command:** `Tailer -a {gtf} -read {read_num} -t {threshold} {bam}`
+
+**Output:** `{outdir}/{sample_id}/{sample_id}_tail.csv` with columns: Count, EnsID, Gene_Name, End_Position, Tail_Length, Tail_Sequence
+
+**Config:** `Params.tailer.read` (default 2 for PE), `Params.tailer.threshold` (default 100), `Params.tailer.rev_comp` (default false)
+
+## Demultiplexer integration (3' adapter removal + PCR dedup)
+
+`jla-demultiplexer` (pip: `jla-demultiplexer`) provides three CLI tools:
+- `jla-trim` — simple trim randommer+AG from read1 3' end + remove PCR duplicates (hamming distance based)
+- `fastqbreakdown` — single barcode processing with dedup
+- `demultiplexer` — full manifest-based pipeline with barcode filtering + BLAST alignment
+
+**For preprocessing before Trim Galore, use `jla-trim`** (trimDeDup function):
+```bash
+jla-trim -r1 sample_1.fq -r2 sample_2.fq -r 10 -maxHam 1
+```
+
+**Requirements:**
+- Uncompressed FASTQ (no gzip support in CLI)
+- Output: `{input}.trimmed.fastq` (appended suffix, NOT renamed)
+
+**Module:** `modules/demultiplexer/demultiplexer.smk` + `demultiplexer.yaml`
+
+**Snakemake rule pattern** (handles decompress → run → recompress):
+```python
+rule demultiplex_trim_dedup:
+    input:
+        r1 = indir + "/{sample_id}/{sample_id}_1.fq.gz",
+        r2 = indir + "/{sample_id}/{sample_id}_2.fq.gz",
+    output:
+        r1 = outdir + "/{sample_id}/{sample_id}_1.fq.gz",
+        r2 = outdir + "/{sample_id}/{sample_id}_2.fq.gz",
+    params:
+        ranmer_len = 10,  # from config Params.demultiplexer.ranmer_len
+        max_ham = 1,       # from config Params.demultiplexer.max_ham
+    run:
+        # 1. Decompress gzipped FASTQ to temp files
+        # 2. Run jla-trim (produces {tmp}.trimmed.fastq)
+        # 3. gzip -c trimmed > output
+        # 4. Cleanup temp files
+```
+
+**Pipeline position:** BEFORE Trim Galore, AFTER raw FASTQ:
+```
+1_raw_fastq → demultiplex_trim_dedup (dedup_fastq) → Trim Galore (2_trimmed_fastq) → ...
+```
+
+**Config:**
+```json
+{
+    "Params": {
+        "demultiplexer": {
+            "ranmer_len": 10,
+            "max_ham": 1
+        }
+    }
+}
+```
+
+**Pitfall:** `jla-trim` outputs `{input}.trimmed.fastq` (appends to input path). The rule must rename/gzip to the expected output path. Also, the tool reads ALL reads into memory (`SeqIO.parse` → list), so it may be memory-intensive for large files.
+
+## Subsample module (seqtk sample for abundant small RNAs)
+
+For high-abundance small RNAs (U1, U2, U3, 7SL, 7SK), PCR duplicate detection using randomers fails because the randomer length is too short relative to abundance. Fix: subsample to 100,000 reads using `seqtk sample`. For all other RNAs, use the full library (symlink pass-through).
+
+**Module:** `modules/subsample/subsample.smk` + `subsample.yaml` (conda: seqtk)
+
+**Conditional logic based on sample name:**
+```python
+abundant_rnas = config.get("Params", {}).get("subsample", {}).get("abundant_rnas", [])
+
+def is_abundant(sample_id):
+    """Check if sample targets an abundant small RNA by name matching."""
+    sample_upper = sample_id.upper()
+    return any(rna.upper() in sample_upper for rna in abundant_rnas)
+```
+
+**Rule pattern** — always run seqtk, but set n=0 for non-abundant (symlink pass-through):
+```python
+rule subsample_fastq:
+    input:
+        r1 = indir + "/{sample_id}/{sample_id}_1.fq.gz",
+        r2 = indir + "/{sample_id}/{sample_id}_2.fq.gz",
+    output:
+        r1 = outdir + "/{sample_id}/{sample_id}_1.fq.gz",
+        r2 = outdir + "/{sample_id}/{sample_id}_2.fq.gz",
+    params:
+        n = get_subsample_n,  # 100000 for abundant, 0 for others
+        seed = seed,
+    run:
+        if params.n == 0:
+            # Non-abundant: symlink to pass through
+            os.symlink(os.path.abspath(input.r1), str(output.r1))
+            os.symlink(os.path.abspath(input.r2), str(output.r2))
+        else:
+            # Abundant: decompress → seqtk sample → recompress
+            shell(f"zcat {input.r1} > {tmp_r1}")
+            shell(f"seqtk sample -s {params.seed} {tmp_r1} {params.n} > {sub_r1}")
+            shell(f"gzip -c {sub_r1} > {output.r1}")
+            # Same for R2 with identical seed to maintain pairing
+```
+
+**Pipeline position:** AFTER demultiplexer, BEFORE Trim Galore:
+```
+1_raw_fastq → demultiplex (dedup_fastq) → subsample (dedup_subsampled_fastq) → Trim Galore → ...
+```
+
+**Config:**
+```json
+{
+    "Params": {
+        "ncRNAseq": {
+            "abund_small_rnas": ["U1", "U2", "U3", "7SL", "7SK"],
+            "subsample_n": 100000,
+            "subsample_seed": 42
+        }
+    }
+}
+```
+
+**Key:** PE reads must use the SAME seed for R1 and R2 to maintain pairing. `seqtk sample -s 42 r1.fq 100000` and `seqtk sample -s 42 r2.fq 100000` select the same reads from both files.
+
+**"Three times averaging" note:** The paper describes averaging counts from 3 independent subsamples. For the pipeline, this means running the workflow 3 times with different seeds and averaging the gene counts downstream — NOT merging 300k reads into one FASTQ.
+
+## Simple modules without .json
+
+Modules that are pure pipeline steps (demultiplexer, subsample, tailer) with no complex config may omit the `.json` template file — they only need `.smk` + `.yaml`. The `.json` is required for modules that have their own `run.py` integration or complex config contracts. For modules whose config is fully defined by the parent subworkflow's config dict, the `.json` is optional.

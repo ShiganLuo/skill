@@ -162,39 +162,15 @@ except ImportError:
 ## References
 
 - [ChIP-seq Report Structure](references/chipseq-report-structure.md) — standard PPT slide order for ChIP-seq peak calling reports, QC metrics, data sources
-- [scRNA-seq Report Structure](references/scrnaseq-report-structure.md) — 15-slide PPT template for scRNA-seq analysis reports, h5ad data extraction, image fallback strategy
 
 ## Pitfalls
 
 - **Don't install packages without asking.** If matplotlib/pandas is missing, wrap in try/except and log a warning. User will install themselves.
 - **Always review existing deliverables before creating new ones.** When user asks to "make a PPT" or "generate a report" and a file already exists at the target path, READ the existing file first. Match its structure, style, slide order, and content organization. Use `python -m markitdown existing.pptx` to inspect. The user expects continuity, not a completely different report.
-- **Chinese for conversation, English for code/docstrings.** User-facing plot titles default to English unless explicitly told otherwise. Do NOT hardcode Chinese in matplotlib titles - the user may say "use Chinese" then correct to "default English".
-- **Use `typing` module (Dict, List, Optional, Set) not Python 3.10+ syntax** (dict[str, list[str]] | None). Codebase targets Python 3.9 compat.
-- **Scripts must NOT embed environment paths** (no `~/miniconda3/envs/DNA/bin/python` in shebangs or subprocess calls). Activate env first, run with plain `python`. Scripts must be portable.
-- **Reuse existing project libraries** (e.g. `venn.py` from `src/common/plot/Python/`) instead of reimplementing. Import via `sys.path.insert` + `try/except ImportError`.
-- **DESeq2 output files use `{contrast}.` prefix** in filenames (e.g. `Scramble_vs_Rn7sk_sh1.TEcount_Gene.name.tsv`, `Scramble_vs_Rn7sk_sh1.cpmPCA.png`). Function output files (GO/KEGG/GSEA) do NOT use prefix. When building file paths in Python, always include the contrast prefix for DE files.
-- **DESeq2.r ScreenFeature thresholds**: `padj < 0.05` (strict less-than) and `|log2FoldChange| >= 0.58` (lfc_cut default). When filtering `.name.tsv` for Venn/report, use these exact thresholds - NOT `padj <= 0.05` or `|log2FC| >= 1`. Verified: row-level counts match `updown.tsv` exactly.
-- **venn.py uses `plt.figure(0)` internally** - call `plt.close("all")` before AND after each venn.py call to avoid global figure state conflicts that cause missing PPT slide images.
-- **Excel sheet names**: max 31 chars. Use `_unique_sheet_name()` helper that auto-numbers conflicts (base, base1, base2...). Never let openpyxl auto-rename - it generates "Recovered_Sheet" on severe conflicts.
-- **Arriba-specific**: gene names can contain aliases like `Gm43566(174),AI506816(22572)` - strip with `.split("(")[0].split(",")[0]` for canonical keys.
-- **ITD (internal tandem duplication)** shows up as `gene::gene` self-fusions with `in-frame` reading frame - these are gene-internal duplications, not true inter-gene fusions. Note this in conclusions.
+- **Chinese for conversation, English for code.** Docstrings and comments in English, user-facing conclusions can be Chinese if user prefers.
+- **Arriba-specific**: gene names can contain aliases like `Gm43566(174),AI506816(22572)` — strip with `.split("(")[0].split(",")[0]` for canonical keys.
+- **ITD (internal tandem duplication)** shows up as `gene::gene` self-fusions with `in-frame` reading frame — these are gene-internal duplications, not true inter-gene fusions. Note this in conclusions.
 - **read-through fusions** between adjacent genes are transcriptional noise, not structural variants. Flag them but don't treat as high-priority findings.
-- **Container vs stock package comparison**: When debugging a container-packaged tool, download the exact PyPI version with `pip download <pkg>==<ver> --no-deps`, extract with `unzip`, and `diff` against the container's installed code. This reveals what patches actually changed vs what was already built-in. Don't assume patches applied — check if the OLD text pattern exists in the stock version first.
-- **Fallback code paths in bioinformatics tools**: Tools like scte-quant have fallback paths (e.g., pysam when samtools is missing) that can produce drastically different results. When a container gives different results than expected, check `_HAS_SAMTOOLS` / `_HAS_X` flags and verify which code path was taken from the log (e.g., "samtools found" vs "falling back to pysam").
-- **scTE-specific**: scte-quant 1.6.1's `_bam2bed_pysam()` does NOT do UMI dedup (`awk '!x[$4$5]++'`), unlike `_bam2bed_cmd()`. With CR+UR tags, the pysam path produces ~4x more BED lines, dramatically inflating per-barcode counts and cell detection. Always ensure samtools is in PATH when running scTE outside a container.
-- **`nargs="+"` with repeated flags silently keeps only the LAST value.** `--samples A --samples B --samples C` with `nargs="+"` gives `['C']`, NOT `['A', 'B', 'C']`. When Snakemake builds a command with `cmd += ["--samples", s]` in a loop, the Python script MUST use `action="append"` instead. This is the #1 cause of "only one sample in report" bugs. Verify with `python3 -c "import argparse; ..."` before committing.
-- **Snakemake report rule input must list ALL module outputs.** Don't just list narrowPeak and annotation — include trimming stats, bowtie2 metrics, markdup metrics, TE overlap files, enrichment PNGs, cutoff analysis. Missing inputs mean Snakemake won't track dependencies and the report may run before upstream data is ready.
-- **IP-input pair mapping for enrichment figures.** Pass via `--ip-input-pair IP:Input` (repeatable `action="append"`). Parse with `pair.split(":", 1)` to construct paths like `{te_dir}/{ip}_vs_{input}_enrichment.png`.
-- **Snakemake optional inputs must return `[]` not `""`.** When an input function conditionally returns no file, return an empty list `[]`, NOT an empty string `""`. Snakemake treats `""` as a file path and raises `Empty file path encountered`. Example:
-  ```python
-  def _get_optional_input(wildcards):
-      if condition:
-          return path_to_file
-      return []  # NOT ""
-  ```
-- **All Snakemake rules in this project use `run:` blocks, not `shell:`.** The convention is `run:` + logger + timestamped `.sh` script + `shell(f"bash {script} > {log} 2>&1")`. A rule using bare `shell:` is inconsistent and won't have logging/tracing. Convert to `run:` pattern when adding new rules.
-- **Broad xls has fewer columns than narrow xls.** MACS3 broad_peaks.xls lacks `abs_summit` (9 cols vs 10). Don't use the same parser for both — check `len(parts) >= 9` for broad, `>= 10` for narrow.
-- **Consolidate per-module QC sheets into one summary.** When generating Excel reports, merge TrimGalore + Bowtie2 + MarkDuplicates + MACS3 + Peak Count + FRiP into a single "QC Summary" sheet with prefixed column names (e.g., `Trim_Total_R1`, `Align_Overall_Pct`, `MarkDup_Dup_Rate`). Keep separate sheets only for detailed data (e.g., Bowtie2 Metrics 120+ columns). QC Summary should be the LAST sheet.
 
 ## Verification
 

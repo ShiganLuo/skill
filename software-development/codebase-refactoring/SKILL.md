@@ -215,12 +215,39 @@ See `references/numpy-docstring-template.md` for the full NumPy docstring format
 - **Not cleaning `__pycache__`**: Can cause confusion with stale bytecode
 - **Renaming without understanding dependencies**: Check for hardcoded script paths in shell scripts and argparse defaults
 - **Committing too much at once**: Keep refactoring commits separate from feature changes
-- **Triple-quote pseudo-comments**: `'''...'''` used as commented-out code IS a string literal expression, NOT a comment. It can cause `SyntaxError: unterminated triple-quoted string` if the content itself contains quotes. Always use `#` for commenting or delete entirely.
-- **Duplicate function definitions**: If two functions have identical bodies (e.g., `get_thr` and `detect_thr` both return `mean + 3*std`), merge into one and update all callers.
-- **res[pos] as list**: Using positional lists for tabular records is fragile. Convert to dict keyed by column name: `records[pos] = {"col1": v1, "col2": v2}`. Define a `HEADER` list and use `_build_record()` to assemble.
-- **Mutable parameter mutation**: If a function both mutates an input dict AND returns it, callers can't tell whether the return is a new object or the mutated input. Prefer: create internally, return, let caller merge.
-- **os.scandir vs glob for large directories**: When `glob.glob()` or `os.listdir()` times out on directories with 5000+ entries (common on NFS/LIMS), use `os.scandir()` — it's a lazy iterator that doesn't pre-fetch all entries. Pattern: `for entry in os.scandir(dir): if entry.is_dir(): ...`
 - **Incomplete propagation of new parameters**: When adding a parameter (e.g., `image_format`) to a top-level function, always trace through the full call graph — including functions in subdirectory modules — and update every downstream callee. Missed propagation leaves hardcoded values in leaf functions.
 - **Docstring placement with None-default initialization**: When converting mutable defaults to `Optional[T] = None` + body init, the docstring MUST come BEFORE the `if x is None` check. Python treats the first string literal after `def` as the docstring — placing the if-check first makes it unreachable and the docstring lost.
 - **Inconsistent CLI arg style across project scripts**: When multiple scripts in a project accept the same kind of parameter (e.g., image formats), unify the argparse definition: same short flag (`-f`), same long flag (`--format`), same `action="append"`, same `dest="formats"`, same help text. Don't use `--image_formats nargs="+"` in one script and `-f/--format action="append"` in another.
 - **Bare `list`/`dict` in function signatures**: Always use `typing.List[str]`, `typing.Dict[str, str]`, etc. Bare `list` loses item-level type information. When the parameter is optional, use `Optional[List[PlotFormat]]` not `list = None`.
+- **Writing new classes without checking for existing ones**: Before creating a new utility class or module, scan the codebase for existing implementations. Writing a new class that duplicates an existing one wastes effort and can accidentally overwrite the existing file. Use `search_files(target='files', pattern='*Validator*')` or similar to check first.
+
+## __main__ Block Extraction Pattern
+
+When a Python script's `if __name__ == "__main__":` block grows beyond ~20 lines, extract the logic into named functions. This improves readability, testability, and makes the entry point scannable at a glance.
+
+**Pattern:**
+```python
+def setup_args(args):
+    """Validate and configure CLI args."""
+    # Mode-specific setup (test vs normal)
+    return args
+
+def execute(args, logger):
+    """Main execution logic."""
+    # All the actual work
+
+def print_summary(results):
+    """Print pass/fail or aggregation summary."""
+
+if __name__ == "__main__":
+    args = parse_args()
+    setup_args(args)
+    logger = setup_logger(...)
+    execute(args, logger)
+```
+
+**Key rules:**
+- `__main__` block should be ≤15 lines
+- Functions modify args in-place (or return modified copy)
+- Pass `logger` and `ROOT_DIR` as parameters, not globals
+- Summary/result-display logic goes in its own function

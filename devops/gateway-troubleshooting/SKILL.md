@@ -104,19 +104,6 @@ hermes gateway restart
 ```
 The gateway auto-creates backups before attempting repair. Multiple backups accumulate — safe to prune old ones. If no good backup exists, deleting state.db lets Hermes recreate it (loses session history but restores functionality).
 
-## Home Channel Configuration
-
-Home channels are the default destination for cron delivery and cross-platform
-routing. They persist in `~/.hermes/.env` as `<PLATFORM>_HOME_CHANNEL` env vars.
-
-**Quick check:**
-```bash
-grep -i "HOME_CHANNEL\|HOME_ROOM\|HOME_ADDRESS" ~/.hermes/.env | grep -v "^#"
-```
-
-Set via `/sethome` from the target chat (preferred), or edit `.env` manually.
-Full reference: [references/home-channel-configuration.md](references/home-channel-configuration.md)
-
 ## General Platform Checklist
 
 For any platform adapter failing to connect:

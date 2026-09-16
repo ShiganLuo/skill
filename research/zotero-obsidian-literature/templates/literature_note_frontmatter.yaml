@@ -1,0 +1,55 @@
+# YAML frontmatter spec for `@citekey.md` literature notes
+# This matches the existing convention across the user's 243 literature notes.
+# Use this when creating new notes by hand or aligning template output.
+
+---
+alias: <titleShort or empty>
+tags:
+  - research
+year: <year>
+title: <raw title, no quotes>
+container: <journal or booktitle>
+url: <URL or https://doi.org/<DOI>>
+zotero: zotero://select/items/@<citekey>
+authors:
+  - "<[[Firstname Lastname]]>"
+  - "<[[Firstname Lastname]]>"
+  - ...
+---
+
+# Body structure (matches existing notes)
+
+- [ ] 《<title>》[🆉](zotero://select/items/@<citekey>) ^read
+
+related:: 
+affiliation:: 
+
+---
+
+- abbr.
+
+#### comment
+
+## 主要内容
+
+
+## Field-by-field guidance
+
+| Field | Source | Format | Example |
+|---|---|---|---|
+| `alias` | optional short title | free text | `Genetic determinants of micronucleus formation in` |
+| `tags` | always include `research` | YAML list | `- research` |
+| `year` | from bib | 4-digit string | `2024` |
+| `title` | raw title (no quotes, no capitalization changes) | string | `Genetic determinants of micronucleus formation in vivo` |
+| `container` | journal name | string | `Nature` |
+| `url` | prefer URL, fall back to DOI URL | URL | `https://www.nature.com/articles/s41586-023-07009-0` |
+| `zotero` | the select URI | URI | `zotero://select/items/@adamsGeneticDeterminantsMicronucleus2024` |
+| `authors` | multi-line wikilinks | YAML list of quoted strings | `- "[[D. J. Adams]]"` |
+
+## Common divergences to avoid
+
+- Don't add `- review` tag unless entry is actually a review article
+- Don't quote the title in the frontmatter (no `"..."`)
+- Don't capitalize the title (preserve original case from bib)
+- Don't put authors on a single line `[ "...", "..." ]`
+- Don't include LaTeX escapes in author names — decode first

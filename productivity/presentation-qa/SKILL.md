@@ -80,9 +80,7 @@ Use when reviewing slide images directly:
 5. **Footer/annotation text overlapping background shapes** — the text is rendered on top of a colored bar, but contrast may be poor.
 6. **Gene IDs or long identifiers overflowing table columns** — especially in bioinformatics reports.
 7. **Bottom elements too close to slide edge** — charts and tables that extend to within 0.2" of the bottom.
-8. **Text overflow inside textboxes** - the #1 bug in programmatically generated decks. The textbox shape is within bounds, but the text renders beyond it. python-pptx doesn't clip text. Common in summary slides with 3+ samples where each sample has 5+ lines. Fix: compress text (fewer lines, smaller fonts), set `tf.auto_size = None`, and verify with height estimation script.
-9. **Table row-height overflow (pptxgenjs)** - `addTable` with `rowH: 0.3` and 7 rows = 2.1" total. On a 7.5" slide, a table starting at y=5.8" ends at 7.9" — past the boundary. Always compute `start_y + num_rows * rowH` before placing tables. Fix: reduce `rowH` to 0.20–0.22, shrink font to 9pt, or compress the chart above to move the table up.
-10. **PDF pixel-margin analysis as fallback QA** - when the model has no vision and delegate_task subagents are the only visual option, convert to images (`soffice --headless --convert-to pdf` then `pdftoppm -jpeg -r 150`), then use PIL/numpy to check if content extends into the bottom 15px of each slide (`arr[-15:,:].std() > 10` means overflow). This catches table overflow that code-level shape checks miss when using pptxgenjs (which doesn't expose table geometry via python-pptx since it's a JS-generated file).
+8. **Text overflow inside textboxes** — the #1 bug in programmatically generated decks. The textbox shape is within bounds, but the text renders beyond it. python-pptx doesn't clip text. Common in summary slides with 3+ samples where each sample has 5+ lines. Fix: compress text (fewer lines, smaller fonts), set `tf.auto_size = None`, and verify with height estimation script.
 
 ## Verification Loop
 

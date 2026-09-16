@@ -1,263 +1,127 @@
-# ChIP-seq Module Patterns
+## deeptools enrichment heatmap module pattern
 
-Config keys specific to ChIP-seq workflows:
+Two-step deeptools pipeline for ChIP-seq/ATAC-seq enrichment visualization.
+Supports **three loci modes** — peaks (default), TSS (auto-generated from GTF), or custom BED.
 
-```python
-indir = config.get("indir", "input")           # BAM directory (from bowtie2)
-peaks_indir = config.get("peaks_indir", "peaks")  # Peaks directory (from macs3)
-samples = config.get("samples", [])
-ip_samples = config.get("ip_samples", [])
-input_samples = config.get("input_samples", [])
-sample_ip_input_map = config.get("sample_ip_input_map", {})  # IP -> input control mapping
+**DAG position:** After MACS3 (peaks) and igv/bamCoverage (BigWig), alongside HOMER — both consume peaks independently.
+
+```
+Step 6: bamCoverage → BigWig ──┐
+Step 7: MACS3 → narrowPeak ────┼→ Step 9: deeptools heatmap
+                                └→ Step 10: HOMER annotation
 ```
 
-## Nested Procedure config for sub-tools
+**Module structure:** `modules/deeptools_heatmap/` with 3 files + `bin/generate_tss_bed.py`.
 
-When a tool is a sub-command of a package (bedtools has intersect, bamtobed, etc.),
-use the parent tool name in Procedure and pass the sub-command in the shell script:
+**Rules (all unconditional):** `generate_tss_bed`, `computeMatrix`, `plotHeatmap`, `deeptools_heatmap_result` (sentinel)
+`generate_tss_bed` is defined unconditionally (no `if` wrapper). DAG skips it when `regions != "tss"` since nothing depends on it. Uses `gtf or "/dev/null"` as safe fallback input. See pitfall #52.
 
-```python
-params:
-    bedtools = config.get("Procedure", {}).get("bedtools") or "bedtools",
-    samtools = config.get("Procedure", {}).get("samtools") or "samtools"
-# In script: $BEDTOOLS intersect -a BAM -b PEAK -u
-```
+### Multi-mode loci support
 
-Config JSON:
+The `Params.computeMatrix.regions` key controls which BED regions to analyze:
+
+| Value | Mode | referencePoint | Description |
+|-------|------|----------------|-------------|
+| `"peaks"` (default) | reference-point | center | Per-sample MACS3 narrowPeak |
+| `"tss"` | reference-point | TSS | Auto-generated from GTF via `bin/generate_tss_bed.py` |
+| `/path/to/regions.bed` | auto | configurable | User-provided BED (TSS, gene body, custom loci) |
+
+When `regions == "tss"`, the DAG triggers `generate_tss_bed` (defined unconditionally, see pitfall #52) which:
+1. Reads `genome.gtf` from config
+2. Runs `bin/generate_tss_bed.py --gtf <gtf> --output <bed> --flank <tss_flank>`
+3. Produces a shared BED file at `{outdir}/_tss_regions.bed`
+
+For custom BED files, users can switch to `scale-regions` mode via `Params.computeMatrix.mode`:
 ```json
 {
-    "Procedure": {
-        "bedtools": "bedtools",
-        "samtools": "samtools"
-    }
+    "regions": "/path/to/genes.bed",
+    "mode": "scale-regions",
+    "upstream": 3000,
+    "downstream": 3000,
+    "bodyLength": 5000
 }
 ```
 
-Note: Prefer `bedtools intersect` over legacy `intersectBed` — same functionality, better maintained.
+### Config dict in subworkflow
 
-## Markdup vs Dedup — critical distinction for ChIP-seq
-
-**markdup** (GATK4 via `gatk_prepare.smk`): adds read groups + flags PCR duplicates in BAM. Downstream tools like MACS3 handle filtering via `--keep-dup auto`. Output: `.sorted_markdup.bam`. Uses existing `modules/gatk/gatk_prepare.smk` — do NOT create a new markdup module.
-
-**dedup** (samtools markdup -r via `igv.smk`): removes duplicate reads entirely. Suitable for visualization tracks (BigWig) but NOT for peak calling — loses information MACS3 needs. Output: `.dedup.bam`.
-
-**ChIP-seq DAG (aligned with nf-core/chipseq):**
-```
-Align (bowtie2/bwa) → raw bam
-    ├── gatk_prepare: AddOrReplaceReadGroups + MarkDuplicates → .sorted_markdup.bam
-    │       ├── MACS3 peak calling (--keep-dup auto handles flagged dups)
-    │       ├── FRiP score (uses .sorted_markdup.bam)
-    │       └── HOMER annotation (on MACS3 peaks)
-    └── igv dedup (samtools markdup -r) → .dedup.bam → BigWig (bamCoverage)
-```
-
-**Key rule:** MACS3 peak calling MUST receive markdup (flagged) BAM, NOT raw and NOT dedup-removed. The `--keep-dup auto` default correctly filters marked duplicates during peak calling.
-
-**Subworkflow config pattern:**
 ```python
-gatk_prepare_config = {
-    "indir": bowtie2_config["outdir"],
-    "outdir": f"{outdir}/common/4_markdup_bam",
+deeptools_heatmap_config = {
+    "ROOT_DIR": ROOT_DIR,
+    "env": config.get("env", {}),
+    "indir": macs3_config["outdir"],         # peaks
+    "outdir": f"{outdir}/heatmap",
     "logdir": logdir,
-    "input_bam_substring": "",
+    "bigwig_dir": igv_config["outdir"],      # BigWig tracks
+    "samples": ip_samples,
     "Procedure": {
-        "gatk": config.get("Procedure", {}).get("gatk") or "gatk",
-        "samtools": config.get("Procedure", {}).get("samtools") or "samtools"
-    },
-    "Params": {"gatk": config.get("Params", {}).get("gatk", {})},
-    "addReadsGroup": config.get("addReadsGroup", {}),
-    "genome": {"fasta": config.get("genome", {}).get("fasta")}
-}
-```
-
-**Output naming:** `.sorted_markdup.bam` + `.sorted_markdup.bai` + `.Markdup-metrics.txt`
-
-**samtools markdup pipeline (igv.smk, with -r, for tracks only):**
-```bash
-samtools sort -n -@ ${threads} input.bam |
-  samtools fixmate -m - - |
-  samtools sort -@ ${threads} - |
-  samtools markdup -r -@ ${threads} - output.dedup.bam &&
-  samtools index -@ ${threads} output.dedup.bam
-```
-
-## IP vs Input sample handling — critical rules
-
-**Input samples do NOT get peak calling.** MACS3 only runs on `ip_samples`. Input BAMs serve as `-c` control for IP peak calling. Input samples have no narrowPeak/broadPeak/annotation files.
-
-**`sample_ip_input_map` must be built from design_pairs, NOT from a default.** The correct mapping comes from `design_pair.exp_sample_id → design_pair.ctr_sample_id`. A bug in node.py once overwrote all IPs to use `input_samples[0]` — never do this:
-
-```python
-# ❌ WRONG — overwrites correct design-based mapping
-if input_samples:
-    default_input = input_samples[0]
-    for ip_sample in ip_samples:
-        sample_ip_input_map[ip_sample] = default_input
-
-# ✅ CORRECT — mapping already set from design_pairs at line 430
-for design_pair in design_pairs:
-    sample_ip_input_map[design_pair.exp_sample_id] = design_pair.ctr_sample_id
-```
-
-**node.py outfiles for PeakCalling:**
-- IP samples: peaks, annotation, FRiP, heatmap, TE overlap, bigwig, markdup
-- Input samples: markdup, bigwig only (no peaks/annotation/FRiP)
-- Global: cutoff_analysis.png, te_family_overlap.png, tracks, report
-
-## TE overlap enrichment analysis (reads-based)
-
-For computing TE subfamily enrichment (IP vs Input), count reads in peak-TE overlap regions from both BAMs using `bedtools coverage -counts`:
-
-```python
-# In intersect_te.py — after bedtools intersect finds peak-TE overlaps:
-# 1. Extract overlap regions as BED
-# 2. Filter duplicates: samtools view -b -F 1024 -o tmp.bam input.bam
-# 3. Count reads: bedtools coverage -a regions.bed -b tmp.bam -counts
-# 4. Output per-locus: sample_id, te_subfamily, te_length, interval_overlap_frac, overlap_peak_count, ip_reads, input_reads
-```
-
-**Pitfall: `bedtools coverage -F` is a fraction (0.0-1.0), NOT a samtools flag.** `bedtools coverage -F 1024` fails with `-F must be in the range (0.0, 1.0]`. To exclude PCR duplicates, pre-filter with samtools:
-```bash
-samtools view -b -F 1024 -o tmp.bam input.bam   # filter dups
-bedtools coverage -a regions.bed -b tmp.bam -counts  # count reads
-```
-
-**Enrichment plot:** log2(sum(ip_reads) / sum(input_reads)) per TE subfamily. Both reads are in the same TSV row — no need for IP/Input condition grouping.
-
-**TE GTF hierarchy:** `class_id` (LINE/SINE/LTR) → `family_id` (L1/B2/ERV1) → `gene_id` (Lx2B2/B1_Mur1 — most specific). Use `gene_id` for subfamily-level analysis.
-
-## MACS3 cutoff analysis plot
-
-A combined cutoff plot for all IP samples should be a separate rule:
-
-```python
-rule macs3_cutoff_plot:
-    input:
-        cutoffs = expand(outdir + "/{sample_id}/{sample_id}_cutoff_analysis.txt", sample_id=ip_samples),
-    output:
-        plot = outdir + "/cutoff_analysis.png",
-```
-
-The plotting script uses `matplotlib` — if the macs3 SIF doesn't have it, add `matplotlib>=3.5.0` to `macs3.yaml` and rebuild the SIF.
-
-## Report module conventions (PPT + Excel)
-
-**PPT style must match RNAseq_report:**
-- Light theme: `C_BG = 0xF6,0xF8,0xFB`, `C_NAVY = 0x18,0x25,0x43` header bar
-- Standard 16:9: `SLIDE_W=10.0, SLIDE_H=5.625`
-- Helper functions: `_header()`, `_table()`, `_bullets()`, `_textbox()`, `_add_img()`
-
-**Excel must collect ALL module data.** For PeakCalling, this includes:
-1. Overview, 2. TrimGalore stats, 3. Bowtie2 alignment, 4. Bowtie2 metrics, 5. MarkDuplicates, 6. MACS3 Info, 7. Peak Count, 8. narrowPeak (all columns), 9. broadPeak, 10. MACS3 xls (fold_enrichment), 11. Summits, 12. Cutoff Analysis, 13. FRiP, 14. HOMER Annotation (full 19 columns), 15. Region Distribution, 16. Top Genes, 17. TSS Distance, 18. TE Overlap Counts, 19. TE Subfamily Overlap, 20. QC Summary
-
-**CLI arg passing for `nargs="+"` args:** Each sample must be a separate `--samples` argument, NOT joined into one string:
-```python
-# ❌ WRONG — 'Pop5IP Rpp14IP Rpp21IP' becomes one string
-cmd += ["--samples", " ".join(samples)]
-
-# ✅ CORRECT — each sample is a separate arg
-for s in samples:
-    cmd += ["--samples", s]
-```
-
-**Report module config must pass correct directory paths:**
-```python
-PeakCalling_report_config = {
-    "peaks_dir": f"{outdir}/results/peaks",       # NOT outdir/peaks
-    "annotation_dir": f"{outdir}/results/annotation",  # NOT outdir/annotation
-    "qc_dir": f"{outdir}/QC/3_frip_score",
-    "log_sample_dir": f"{logdir}/sample",         # NOT logdir
-    "markdup_dir": f"{outdir}/common/4_markdup_bam",
-}
-```
-
-## Wildcard constraints for repeated patterns
-
-When an output pattern has `{sample_id}` appearing twice (e.g., `outdir/{sample_id}/{sample_id}.fastqc.txt`), Snakemake's greedy regex may match `Pop5IP/Pop5IP.fastqc.txt` as the entire `sample_id`. Fix with:
-
-```python
-wildcard_constraints:
-    sample_id = "[^/]+"
-```
-
-## FRiP score module pattern
-
-FRiP = reads_in_peaks / total_mapped_reads
-
-Command sequence:
-1. `bedtools intersect -a BAM -b PEAK -u | samtools view -c -` — count reads in peaks
-2. `samtools flagstat BAM | grep 'mapped (' | grep -v "primary" | head -1 | awk '{print $1}'` — total mapped reads
-3. `awk "BEGIN {printf \"%.6f\", reads_in_peaks / total_mapped}\"` — calculate ratio
-
-Output: `{sample_id}.FRiP.txt` with tab-separated `sample_id\tfrip_score`
-
-Conda deps: `bedtools>=2.30.0`, `samtools>=1.15.1`
-
-Thresholds: >= 0.3 for TFs (narrow), >= 0.2 for histone marks (broad).
-
-## HOMER annotatePeaks module pattern
-
-Command: `annotatePeaks.pl <peak> <genome_fasta> -gtf <gtf> > output.txt`
-
-Config keys:
-- `Procedure.annotatePeaks` (default: `annotatePeaks.pl`)
-- `genome.fasta`, `genome.gtf`
-
-Output: `{sample_id}/{sample_id}_peaks.annotatePeaks.txt`
-
-HOMER annotation columns (19 total):
-PeakID, Chr, Start, End, Strand, Peak Score, Focus Ratio/Region Size, Annotation, Detailed Annotation, Distance to TSS, Nearest PromoterID, Entrez ID, Nearest Unigene, Nearest Refseq, Nearest Ensembl, Gene Name, Gene Alias, Gene Description, Gene Type
-
-Conda deps: `homer>=4.11`
-
-## Full PeakCalling config JSON
-
-The `config/PeakCalling.json` must include all Procedure/Params keys for every module in the DAG:
-
-```json
-{
-    "Procedure": {
-        "trim_galore": null, "bowtie2-build": null, "bowtie2": null,
-        "samtools": null, "gatk": null, "bamCoverage": null,
-        "macs3": null, "bedtools": null, "annotatePeaks": null
+        "computeMatrix": config.get("Procedure", {}).get("computeMatrix") or "computeMatrix",
+        "plotHeatmap": config.get("Procedure", {}).get("plotHeatmap") or "plotHeatmap",
     },
     "Params": {
-        "trim_galore": {"quality": 25},
-        "gatk": {"javaOptions": "-Xmx30g", "tmp-dir": null},
-        "bamCoverage": {"binSize": 50, "normalizeUsing": "CPM", "offset": null, "extendReads": false},
-        "macs3": {"bw": 200, "pvalue": "1e-5", "genome_size": "mm"},
-        "peak_te_overlap": {"method": "reads", "sort_by": "te_length", "top_n": 30, "combine": false}
+        "computeMatrix": config.get("Params", {}).get("computeMatrix", {}),
+        "plotHeatmap": config.get("Params", {}).get("plotHeatmap", {}),
     },
-    "addReadsGroup": {"RGLB": "lib1", "RGPL": "ILLUMINA", "RGPU": "unit1"},
-    "genome": {"fasta": null, "gtf": null, "bowtie2_index_prefix": null, "te_gtf": null}
+    "genome": {
+        "gtf": config.get("genome", {}).get("gtf"),   # needed for TSS mode
+    },
 }
 ```
 
-**MACS3 Params:**
-- `bw`: bandwidth for model building (default 200)
-- `pvalue`: p-value cutoff for peak calling (default "1e-5")
-- `genome_size`: genome size shorthand — "hs" (human), "mm" (mouse), etc.
+### Key Params
 
-**peak_te_overlap Params:**
-- `method`: "reads" (IP/Input read ratio), "count" (peak count), "interval" (overlap fraction)
-- `sort_by`: "te_length" (default) or "enrichment"
-- `top_n`: number of subfamilies to show (default 30)
-- `combine`: false = separate plot per IP:Input pair, true = single combined plot
+**computeMatrix:**
+- `regions`: `"peaks"`, `"tss"`, or path to BED file (default `"peaks"`)
+- `mode`: `"reference-point"` or `"scale-regions"` (auto-selected based on `regions`)
+- `referencePoint`: `"center"`, `"TSS"`, `"TES"` (auto-selected for peaks/tss)
+- `before`/`after`: bp flanking for reference-point mode (default 3000 each)
+- `upstream`/`downstream`: bp flanking for scale-regions mode (default 3000 each)
+- `bodyLength`: gene body length for scale-regions (default 5000)
+- `binSize`: resolution in bp (default 10)
+- `sortUsing`: sort order for heatmap rows (default "mean")
+- `missingDataAsZero`: treat NaN as 0 (default true)
+- `tss_flank`: flank around TSS for BED generation (default 1000)
 
-## run.py endpoint function
+**plotHeatmap:**
+- `colorMap`: matplotlib colormap (default "YlOrRd")
+- `heatmapHeight`/`heatmapWidth`: output dimensions (default 15/8)
+- `whatToShow`: display elements (default "heatmap, colorbar, metagene")
 
-`runPeakCalling()` outfiles must match the FINAL outputs (markdup, peaks, FRiP, HOMER), NOT intermediate files (trimmed fastq, raw bam). Intermediate files are tracked by Snakemake DAG automatically:
+### Mode-dependent command construction
 
 ```python
-# Final endpoints only
-outfiles.append(f"{outdir}/common/4_markdup_bam/{sid}/{sid}.sorted_markdup.bam")
-outfiles.append(f"{outdir}/results/tracks/{sid}.bigwig")
-outfiles.append(f"{outdir}/results/peaks/{sid}/{sid}_peaks.narrowPeak")
-outfiles.append(f"{outdir}/QC/3_frip_score/{sid}/{sid}.FRiP.txt")
-outfiles.append(f"{outdir}/results/annotation/{sid}/{sid}_peaks.annotatePeaks.txt")
-outfiles.append(f"{outdir}/results/te_overlap/{sid}/{sid}_te_subfamily_overlap.tsv")
-outfiles.append(f"{outdir}/results/peaks/cutoff_analysis.png")
-outfiles.append(f"{outdir}/results/te_overlap/te_family_overlap.png")
-outfiles.append(f"{outdir}/PeakCalling_report.pptx")
-outfiles.append(f"{outdir}/PeakCalling_report.xlsx")
+# In the computeMatrix run: block, select mode based on regions source:
+if regions_cfg == "peaks":
+    mode = "reference-point"; ref_point = "center"
+elif regions_cfg == "tss":
+    mode = "reference-point"; ref_point = "TSS"
+else:
+    mode = params.mode; ref_point = params.referencePoint
+
+cmd = [params.computeMatrix, mode, ...]
+if mode == "reference-point":
+    cmd += ["--referencePoint", ref_point, "--beforeRegionStartLength", str(before), ...]
+elif mode == "scale-regions":
+    cmd += ["--regionBodyLength", str(bodyLength), "--upstream", str(upstream), ...]
+```
+
+### Conda env
+
+`deeptools=3.5.1`, `matplotlib=3.7`, `numpy>=1.24`. Channel order: conda-forge before bioconda.
+
+### Full PeakCalling config JSON additions
+
+```json
+{
+    "Procedure": { "computeMatrix": null, "plotHeatmap": null },
+    "Params": {
+        "computeMatrix": {
+            "regions": "peaks", "mode": "reference-point", "referencePoint": "center",
+            "before": 3000, "after": 3000, "upstream": 3000, "downstream": 3000,
+            "bodyLength": 5000, "binSize": 10, "sortUsing": "mean",
+            "missingDataAsZero": true, "tss_flank": 1000
+        },
+        "plotHeatmap": {"colorMap": "YlOrRd", "heatmapHeight": 15, "heatmapWidth": 8, "whatToShow": "heatmap, colorbar, metagene"}
+    },
+    "genome": { "gtf": null }
+}
 ```

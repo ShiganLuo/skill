@@ -18,7 +18,7 @@ assests/test/
 2. **Only override existing fields** — don't add new keys to config (no phantom genome.access in CoCulture)
 2. **Schema-driven paths** — `SchemaValidator.generate_test_paths()` from `config/schema.json`
 3. **Per-workflow injection** — read each workflow's config structure, inject accordingly
-4. **Schema = constraints, config = structure** — schema says which fields are paths; config JSON decides flat vs nested
+4. **Schema = constraints, config = structure** — schema says which fields are paths; config JSON decides flat vs nested. Schema includes ALL sections (genome, Params, Procedure) — not just genome.
 5. **Dynamic workflows** — `WORKFLOW_DISPATCH.keys()`, not manual dict
 6. **SE meta fix** — fastq_2 must be non-existent path, not empty (NaN crash)
 7. **Local conda-prefix** — avoid /data/ permission issues
