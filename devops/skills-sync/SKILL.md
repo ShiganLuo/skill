@@ -39,7 +39,7 @@ author: <USER>
 | math_zhou | <USER>@<ZHOU_IP> | `-p 22 -i ~/.ssh/math_zhou`（内网） |
 | lv | <USER>@<LV_IP> | `-p 22 -i ~/.ssh/lv`（南开 VPN 内网） |
 
-lv 只在 VPN 可达（本机连 lv_zheda 走阿里云 <PORT> frp，172.29 网段不可直达）。
+lv 只在 VPN 可达（lv_zheda 走阿里云 frp 隧道，内网网段不可直达）。
 
 ## 尾斜杠语义（详见 rsync-file-sync skill，此处只列结论）
 
@@ -54,7 +54,7 @@ lv 只在 VPN 可达（本机连 lv_zheda 走阿里云 <PORT> frp，172.29 网�
 - 9 条 `.curator_backups/<旧时间戳>/`：过期 curator 快照 → 垃圾类
 - 5 条散件（codebase-inspection、computer-use、ngs-data-download 等）：本地已移入 software-development/ 等分类目录；`recover-sample-provenance.md` 在 git 历史（commit a225312）→ 移动类
 
-math_zhou 干跑 0 删除（两端已一致）。zhang_c2 当日 <PORT> 端口 refused，连通性未验证。
+math_zhou 干跑 0 删除（两端已一致）。zhang_c2 当日隧道端口 refused，连通性未验证。
 
 ## 坑
 
