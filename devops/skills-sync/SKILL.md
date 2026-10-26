@@ -56,6 +56,14 @@ lv 只在 VPN 可达（lv_zheda 走阿里云 frp 隧道，内网网段不可直�
 
 math_zhou 干跑 0 删除（两端已一致）。zhang_c2 当日隧道端口 refused，连通性未验证。
 
+## 敏感信息纪律（2026-10-26 全库脱敏后）
+
+skills 仓库推送 GitHub（ShiganLuo/skill），所有文档已脱敏并重写历史：
+
+- **占位符约定**：服务器 IP → `<ALIYUN_IP>`/`<ZC2_IP>`/`<LV_IP>`/`<ZHOU_IP>`，用户名（luosg/zhousha）→ `<USER>`，SSH 端口（20225/20226/20221）→ `<PORT>`，MySQL 密码 → `<MYSQL_PASSWORD>`。真实值只存本机 rsync.sh（gitignored）和 memory
+- **.gitignore 已排除**：curator 运行时状态（.curator_ledger.jsonl 曾含 5 万+ 用户名路径）、.usage、.hub、各类密钥文件模式（*.pem/id_rsa/credentials/.env）
+- **新增 skill 时的自查**：写完 grep 一遍真实 IP/用户名/密码模式再提交；发现泄漏走 git filter-repo --replace-text 重写历史 + force push（本仓库 2026-10-26 已做过一轮，方法见 git-history-rewriting skill）
+
 ## 坑
 
 - **skills/ 目录含 `.git`、`.archive`、`.curator_ledger.jsonl`（约 1MB）**：全量随同步走。若不想同步归档/备份，加 `--exclude='.archive/'` 等（exclude 默认即保护目标端独有文件，无需额外 protect）
