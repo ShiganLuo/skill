@@ -171,6 +171,10 @@ except ImportError:
 - **Arriba-specific**: gene names can contain aliases like `Gm43566(174),AI506816(22572)` — strip with `.split("(")[0].split(",")[0]` for canonical keys.
 - **ITD (internal tandem duplication)** shows up as `gene::gene` self-fusions with `in-frame` reading frame — these are gene-internal duplications, not true inter-gene fusions. Note this in conclusions.
 - **read-through fusions** between adjacent genes are transcriptional noise, not structural variants. Flag them but don't treat as high-priority findings.
+- **Report negative results explicitly — never leave them implicit.** When a summary covers N items and only some are positive, the report must state the full-zero count and list which items were negative. Silence reads as "not analyzed"; the user will ask "did you analyze ALL of them?" and an implicit zero forces a re-check pass. Before writing conclusions, verify coverage: count analyzed vs total inventory, confirm they match.
+- **Conclusions must carry biological meaning, not just numbers.** Pair each quantitative finding with (a) what genes/content sit in the region, (b) activity level, (c) cross-sample sharing pattern. A table of ratios without gene-content annotation forces the user to ask "and what does this mean?"
+- **Coverage-completeness cross-check before claiming a full analysis.** Verify analyzed count vs total inventory (e.g., regions.bed line count vs filtered.bed fragment count per sample) and state it in the report. Any mismatch = incomplete analysis, fix before reporting.
+- **Layout constants as named module-level variables; layout separate from drawing.** Multi-panel figures: compute every row's layout in a pass-1 pure function (data in, positions out), then draw. Never interleave geometry computation with ax.* calls — that coupling is what makes "fix one panel, break another" loops happen.
 
 ## Verification
 

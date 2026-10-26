@@ -118,6 +118,25 @@ See `references/sv-visualization.md` for the complete visualization patterns, On
 
 ---
 
+## Section D2: Multi-Track Genome Figure Layout (family rows + gene models)
+
+Figures that stack genomic feature rows — per-family/per-sample tracks,
+breakpoint lines, gene models, name labels — e.g. ecDNA breakpoint-family
+figures built from decoil BED + GENCODE GTF.
+
+**Key patterns**: plan/draw separation (pure layout planners vs per-layer draw
+functions, orchestrator only calls them); compute lane/label-row layout BEFORE
+drawing using the exact same packing algorithm the drawer uses; uniform px per
+data unit via `height_ratios` ∝ each row's data total (constant data-unit gaps
+otherwise render at different pixel sizes per row); `ax.text` needs explicit
+clamp + `clip_on=True` near panel edges (text is unclipped by default).
+
+See `references/genome-track-figure-layout.md` for the full pitfall catalog
+(px-per-unit pitfall, label collision packing, gene-track conventions,
+iteration discipline when the user reviews layout drafts).
+
+---
+
 ## Section F: CNC STA Report Merger
 
 Merge gene detection reports (QC, SNV, CNV, SV, etc.) from multiple samples into consolidated Excel/TSV files.

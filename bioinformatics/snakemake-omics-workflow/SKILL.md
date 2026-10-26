@@ -9,6 +9,30 @@ description: Add new modules, subworkflows, and pipelines to the Omics Snakemake
 - User asks to port a Nextflow (nf-core) pipeline to Snakemake
 - User asks to add a new tool module to `workflow/Omics/modules/`
 - User asks to create a new subworkflow in `workflow/Omics/subworkflow/`
+- User asks to tune per-rule threads/memory for a workflow via a `resources` config field (Fiberseq-style `rule_res` pattern) — see `references/per-rule-resources-pattern.md` for the full 4-layer procedure and measured-tuning workflow
+- User asks to visualize/present a module's results inside the workflow (build rules + bin/ scripts in the owning module, wire into subworkflow + node.py outfiles + config JSON + READMEs) — e.g. the decoil ecDNA plots/IGV integration pattern (topology 分类解读与图例图形语言 → `references/decoil-topology-taxonomy.md`)
+- User asks whether/how an ecDNA is transcribed from RNA-seq data (junction-read evidence ladder, circRNA disambiguation → `references/eccdna-expression-evidence.md`)
+- User asks to run a single module directly (standalone with its own config JSON, or one module inside a workflow run) → `references/run-module-invocation.md` — includes the wrapper-Snakefile rule for modules without `rule all`
+
+# Git push procedure for this repo (github.com over SSH)
+
+The repo remote is SSH; direct `git push` hangs until the SOCKS proxy is
+configured. Sequence: check `git config core.sshCommand`; if unset, set
+`git config core.sshCommand "ssh -o ProxyCommand='nc -X 5 -x 127.0.0.1:1080 %h %p'"`
+(SOCKS proxy on 127.0.0.1:1080 — GFW blocks github SSH; campus portal must
+be authenticated first, see memory). Verify reachability once with
+`timeout 15 ssh -o ProxyCommand=... -T git@github.com` before pushing.
+
+If push is rejected (fetch first): `git fetch` and inspect BOTH directions
+(`main..origin/main` and `origin/main..main`) — this repo is shared across
+sessions and remote is often dozens of commits ahead. Rebase, resolve
+conflicts conservatively (in `run.sh` example-command blocks, prefer the
+remote's commented-out form and fold local edits into it as comments),
+`git add <file> && git -c core.editor=true rebase --continue`, then push.
+Do not merge or force-push unless the user asks.
+
+Commit style: follow existing history — `feat(scope):`/`fix(scope):` prefix,
+English or Chinese body both appear; match the most recent commits.
 
 # User preference: proactive error fixing
 
@@ -40,7 +64,7 @@ For serving IGV track HTML via nginx (internal IP access, URL mapping): see `ref
 For IGV track module modes (single vs iCLIP, auto-grouping): see `references/igv-track-modes.md`.
 
 For ncRNAseq small RNA three-pass STAR alignment (canonical gene extraction, multi-pass re-alignment, Tailer 3' end analysis): see `references/ncrna-three-pass-star.md`.
-For SRA data download scripts (ascp vs prefetch, meta file format, run.sh integration): see `references/sra-download-scripts.md`.
+For SRA data download scripts (methods, meta file format, run.sh integration, prefetch `--max-size` and TLS pitfalls): see `references/sra-download-scripts.md`.
 
 For converting legacy `shell:` rules to `run:` blocks (batch migration checklist, pitfalls, verification): see `references/shell-to-run-conversion.md`.
 For config schema validation and test path generation via SchemaValidator: see `references/schema-validator.md`.
@@ -1178,6 +1202,7 @@ Key points:
 - `setup_test_args` uses `SchemaValidator().load()` + `generate_test_paths()` (not inline heuristics)
 - `print_test_summary` is called inside `execute_workflows` in test mode
 - `ROOT_DIR` is passed as parameter, not used as global
+- Logging: `main()` initializes a module-global logger via `setup_logger` from `src/common/util/LogUtil.py`; functions never take a `logger` parameter — they use the module-global logger. Log the full URL and full command line of every external call, and never swallow child-process error lines (pipe stderr into the log stream). CLI `--log` must be optional: when omitted, log to stdout instead of erroring — `setup_logger(name, log_file=str(args.log) if args.log else None, stream=None if args.log else sys.stdout)`. Never `str(args.log)` on an optional arg unguarded: `str(None)` opens a log file literally named `None`.
 
 **Test resources location:** `assests/test/` (NOT `test/` inside source tree). Consolidate with existing `assests/meta/` directory.
 
@@ -1404,6 +1429,38 @@ Benefits:
 - Each function is testable independently
 - Test mode logic is isolated from production logic
 - Easy to add new modes (e.g., `--validate`)
+
+## 55. `__file__` in module .smk is WRONG in Snakemake 9 — use `workflow.current_basedir`
+
+Inside a `module X: snakefile: ...` loaded .smk, `__file__` resolves to
+`.../site-packages/snakemake/workflow.py`, NOT the module's own path (verified
+by debug print in dry-run, 2026-09-30). `os.path.dirname(__file__)` silently
+gives the snakemake install dir. Correct API:
+
+```python
+MODULE_DIR = str(workflow.current_basedir)   # dir of the currently-parsed .smk
+```
+
+`workflow.basedir` = main snakefile dir (NOT the module dir). Always verify
+module-dir resolution with a temporary `print(..., file=sys.stderr)` + dry-run
+before relying on it.
+
+## 56. decoil module (PacVar eccDNA) — CLI gotchas, all verified in decoil.sif 2.0.2
+
+- `decoil reconstruct` has NO `--threads` flag (argparse rejects it, exit 2).
+- VCF must be plain text — decoil uses `open()`, .vcf.gz → UnicodeDecodeError 0x8b.
+- pbsv VCF needs conversion to sniffles1 style: INFO STRANDS/CHR2/END(BND) +
+  FORMAT DR/DV (pbsv has GT:AD:DP only). Converter ships as
+  `modules/decoil/bin/pbsv2decoil.py <in.vcf[.gz]> <out.vcf>` located via
+  `os.path.join(ROOT_DIR, "modules", "decoil", "bin", "pbsv2decoil.py")`
+  (project convention: bin/ + ROOT_DIR, NOT __file__ / current_basedir);
+  the generated .sh runs it before `decoil reconstruct`.
+- BND strand from ALT: `t[p[`→`+-`, `t]p]`→`++`, `]p]t`→`-+`, `[p[t`→`--`.
+- decoil's own `pass_filter` skips ALL records with MATEID (BND pairs never
+  enter the graph) — decoil-internal behavior, not a converter bug.
+- Workflow: test the exact command in the SIF first (`singularity exec ...
+  decoil reconstruct ...` to a tmp outdir), THEN patch the .smk. The image
+  test surfaced both the gzip and pbsv-field issues that dry-run cannot.
 
 ## 45. Config JSON paths must be real paths, not null
 
@@ -1666,5 +1723,128 @@ if len(organisms) == 1:
 ```
 
 **Remove legacy `genomes` field:** Old configs may have `"genomes": ["mm"]` — remove it when migrating to nested structure.
+
+## 57. gsva.py score semantics — KS ranks vs mean z-score
+
+`modules/function/bin/gsva.py` produces TWO matrices (verified 2026-10-11, sign fixed):
+
+- **`gsva_scores.tsv` (KS-based)**: within-sample rank walk (LOW→HIGH), `score = max|miss_frac - hit_frac|`; positive = gene set concentrated at the HIGH-expression end (GSVA/GSEA convention, fixed 2026-10-11; was inverted). Not classic GSVA — the old dead `kcdf` parameter was removed. Constitutive sets (e.g. DNA repair housekeeping) saturate at 0.5–0.86 in every sample with cross-sample span ≤0.19: the score is mostly a property of the SET, not the sample.
+- **`gsva_mean_z.tsv` (mean per-gene z, the heatmap source)**: per-gene z on log2(TPM+1) across samples, averaged within the set; each row sums to 0 across samples. Reflects absolute expression changes — use this for sample comparisons ("pathway higher in A than B"). `--no-log2` if input already log-scale.
+- **`gsva_heatmap.png` = mean-z heatmap** (declared rule output alongside gsva_scores.tsv). `plot_heatmap(values, path, title, value_label, row_scale)` is generic; row_scale=True gives row-z-scored view.
+- **KS scores are rank-relative**: absolute 2–8 fold expression shifts move within-sample ranks only a few percent and get erased; mean-z preserves them. KS and mean-z can disagree in direction (relative rank vs absolute level are different questions) — say which metric a figure shows.
+- **Gene-set means are hijacked by multi-copy families.** Reactome GMT sets contained 23–54% histone genes (H2bc*/H4c*) whose expression was 8–9.6 log2 in fibroblasts vs ~0–2.7 in ESCs (direction anomalous; suspected multi-mapping/pseudogene). They flipped the sign of stem-vs-fibro gaps in DSB/NHEJ/BER/Telomere/Chromosome sets (mean gap negative, median gap positive) and made all heatmap rows move together (same genes shared across sets). Always aggregate set scores by MEDIAN (or trimmed mean) and inspect gene-level distributions (mean vs median, histone/multi-copy fraction) before interpreting any set-level figure.
+- **poly(A) vs total-RNA libraries are not comparable for non-polyA transcripts.** rRNA-depleted total-RNA libraries capture histone mRNAs (stem-loop, no polyA), sn/snoRNA, 7SL/RMRP; poly(A) libraries do not. Mixing them in one TPM panel makes multi-copy families explode in the total-RNA samples only and corrupts every set containing them. Fingerprint library type first: non-polyA ncRNA TPM (Rn7sk, Rpph1, RN7SL*, RMRP) near zero = polyA, percent-of-library = total-RNA. Same trap applies to relative-scale heatmaps: z-scored colors are panel-composition dependent — "same color" ≠ "same expression"; always cross-check absolute values before interpreting a figure.
+
+## 58. New meta rows vs layout lists, and silent PE→SE degradation
+
+`get_input_for_XenofilteR`/star.smk validate every sample against `paired_samples`/`single_samples` built when run.py parses the meta. Two failure modes when adding samples to an existing meta:
+
+1. **`Sample X not defined in paired_samples or single_samples`** — the sample's fastq files did not exist when run.py built the layout lists (MetaUtil classifies SE/PE by actual files) or the lists are stale. Download the fastq first, then re-run run.py so raw.json/config are regenerated.
+2. **PE data silently runs single-end** — if only mate-1 is on disk, the aligner accepts it unpaired (aligner log shows `100% unpaired`), losing half the data with no error. Before running on new samples, verify mate completeness: `ls *_2.fastq.gz | wc -l` must equal the number of PE samples; after alignment, grep the aligner summary for `unpaired`.
+
+When appending rows to a project meta, copy the conventions of an existing row (data_id/design/contaminated_organism style) instead of deriving the schema from pipeline code — the user will redirect you to the existing row as the reference.
+
+## 59. Don't re-implement IGV/UCSC rendering — feed files to modules/track/bin/track.py
+
+`track.py` is the shared renderer: `--mode ucsc` takes a plain list of track
+files (bigwig/bed/bedgraph) and writes UCSC track lines; `--mode igv` takes a
+config JSON (reference fasta/index/cytobandURL, GTF tracks, publicPathMap,
+js path) plus track files and renders the interactive HTML. To browse a new
+result type, generate a config JSON and call track.py — never write a new
+igv.js page. The `igv` config section lives in the workflow config (see
+`config/PacVar.json` for the full key set: js/id/publicPathMap/fastaURL/
+indexURL/cytobandURL/tracks).
+
+Type detection pitfall (fixed in `_track_type`): non-bedgraph suffixes used
+to be declared `type=bigWig` in ucsc track lines. `.bed`/`.bed.gz` now map
+to `type=bed` — verify the emitted `track type=` line when feeding a new
+file format to ucsc mode.
+
+Also: ucsc track lines use RELATIVE `bigDataUrl` paths — the track file is
+only meaningful relative to the directory layout it was generated in.
+
+For the decoil ecDNA application (structure/plot/compare/igv/ucsc rules,
+bin scripts, sif bind-mount quirks), see the decoil-visualization skill
+(user-owned: needs `hermes curator adopt decoil-visualization` before
+autonomous edits can land):
+
+- `decoil_plot`(每样本):summary.txt + reconstruct.ecDNA.filtered.bed → 尺寸分布(log 直方图)+ topology 组成 + ecDNA 区域表。bin 脚本 `decoil_plot.py`,支持 `--mode single|compare`。
+- `decoil_structure`(每样本):**先判断是否检测到 eccDNA 再画** —— filtered BED 无数据行(header-only 会抛 `pd.errors.EmptyDataError`,必须捕获)→ 输出 "No ecDNA detected" 占位图;检测到则按 circ_id 画环形结构。bin 脚本 `decoil_structure.py`,`Params.decoil.structure.{formats,max_per_fig}`,超过 max_per_fig(默认 12)自动分页 `.pN.<fmt>`。decoil 2.0.2 自身无 plotting 子命令(上游已注释掉),结构图必须自绘。**结构图必须带基因功能标注**(用户明确要求,纯坐标圈没有价值),4 层从外到内:基因名标签(癌基因紫色加粗,内置 panel 可 `--onco-genes` 换清单;被环化打断的基因名尾加 `*`)→ 基因条(红=intact 完整包含,橙=truncated 断点落在基因体内,判定:gene 区间未被单个 fragment 完整包含即 truncated)→ 片段主环(按染色体着色)→ 剂量环(内圈橙色,`--bw` 传 coverage bigwig,逐 bin 覆盖以全基因组均值(`load_bw_mean_coverage`)为 1x 基准 log 封顶 100x——**必须用固定 WGS 均值基准,按环内最大值归一化会使所有环看起来一样满**);中心 hub 显示 `N genes / N oncogene / N truncated`;配套输出 `decoil_structure_genes.tsv`(gene/status/onco/region/median_coverage/tpm,tpm 列预留表达耦合接口 `--tpm`)。rule 从 `config.genome.gtf` 传 `--gtf`、从 `bw_dir` 传 `--bw`;outfiles 需同时登记 png + genes.tsv。版式沿革:曾定稿为 decoil-viz 式三轨道线性,但用户后来重新起用并迭代**环形版 decoil_structure.py**(CGView 式:外 ruler 刻度 / 金色 coverage 环 / 基因轨道 / 中心 hub)——两套脚本并存,改哪套先确认用户在看哪张图;用户桌面上的 `a_circ9.png` 等散放 png 是拷贝件,验证渲染必须重跑产物后读 output/ 下的真身,不能用旧拷贝判断"没变"。环形版基因模型画法(多轮迭代收敛,改前先核对本条与 decoil_structure.py 现状):**对齐 `modules/sv/bin/utils/gene_model.py` 的画图惯例**——①内含子线只画在外显子间隔(exon[j].end→exon[j+1].start 逐段),不贯穿全基因,**虚线弧**(描边 Wedge width=0 + edgecolor + linestyle (0,(2.5,1.8));虚线是内含子的固有符号,与截断状态无关),线宽 INTRON_W=0.006 远细于 exon 块(EXON_W=0.075)——粗了会被误读成第二个块或独立圆圈;半径必须精确居中 r_lane-EXON_W/2(残留的历史 +0.007×2 偏移会让虚线贴内边缘,用户否定过);②链方向:**不画任何箭头/三角/taper**(用户明确抛弃)——固定尺寸箭头弧长约 7°,对 <400bp 的短基因是基因自身弧长的 7-20 倍,完全淹没外显子块;taper 方案(第一外显子收窄成尖)也试过被否,仍属变相箭头且引入跨 0kb 角度反转 bug;外显子全部为普通矩形块,方向信息不画。③外显子实心全高块,**每基因独立颜色**——基因名哈希基础色相 + 线性探测避开已用色相(固定调色板取模在基因数超过色数时必撞色),**按基因名缓存**:gene_color 对同一基因被调用两次(模型一次、标签一次),每次都注册色相会污染探测序列且两次可能返回不同色,缓存后同名恒同色;基因名标签同色;truncated 不再用橙色区分(橙金色系与 coverage 环同系不可辨),截断只由 `//` 表达。UTR = exon 带上**基因色 alpha=0.35 + 白描边 0.3** 的叠加(旧 white alpha=0.65 全覆盖视觉不可见,用户看不到等于没画);**不画 CDS 层**(DNA 图不是转录本模型,用户明确否定)。`//` 是基因级标记但必须做**真断点判定**:基因跨度端只有落在片段 clip 边界 ±2bp 内、或基因延伸越过片段末端(beyond fragment end,此时可见端就是片段边界)才画;落在环上完整序列的一端(如跨白缝长基因的另一端)不画——旧版"两端无条件各画一次"会把只被切一次的基因标成两处截断(用户否定)。所有 taper/角度分割运算先把弧段角度归一化到同一分支(e1n<e2n 则 +360)且 taper 长度不超过该 exon 自身弧宽,否则 Wedge theta1>theta2 被 matplotlib 逆时针补 360° 画成整环色带。图例:**基因结构元件(exon/intron/UTR/junction break)统一黑色 #1A1A1A**,coverage 保持金色;strand direction 条目已随箭头移除;junction break 只画两道斜杠不加底色方块。图例位置:画布右侧独立空白带(x≈1.38 起),canvas xlim 扩到 1.80 容纳;figsize 宽高比必须匹配数据范围比例(xlim 跨 3.35 / ylim 跨 2.85 → figsize 9.4×8.0),比例不符时 aspect equal 把环挤到画布一角、标签散布四角。基因名标签:**钉死在基因起点角度,永不沿角度移动**——短基因钉 5' 起点(名称对齐起点),长基因(弧 >90°)锚定弧中点(否则名称飘到长模型远端,名称-模型对不上);碰撞用**径向分层**解决——占位者记 (角度, ring),刻度 ring=0,新标签与同 ring 占位角度差 <20° 才升一环(每环 0.10R,起点 R+0.14,在刻度标签 R+0.055 之外);避让判定若不区分 ring(只看角度),ring 会空转到 max_iter,标签散布画布四角、环缩成一角;同 ring 角差 <20° 升环之外,相邻 ring 且角差 <5° 也算冲突(旋转文字宽度径向投影会压邻层标签)。**刻度自适应环长**:主刻度步长从 (5,10,20,25,50,100,...,5000) 列表选第一个使整环 ≤12 个主刻度的值,次刻度 5:1 细分无标签——固定 10/50kb 间隔在大环上标签挤成一团。极小外显子(<100bp)在 ~150kb 环上物理只有 1-3px,白色描边占满块体呈"白杠"——分辨率极限,不是 bug。**微型基因(全基因弧 <0.15°)强制分区渲染,不靠逐标签避让**(用户定稿):微基因整体移出基因 lane——圆点画在 hub 白圆(r=0.40)与最内基因 lane 之间的专用窄带(r≈0.46),名称画在刻度环外专属带(R+0.10+ring×0.09),微基因点/微基因名/大基因模型三者半径互斥,任何角度都不挤占对方空间。**zorder 覆盖陷阱**:hub 是后画的白底 Circle(zorder=6),同 zorder 的先画元素会被整体盖住——元素"代码画了、图上没有"先查 zorder 与后画白色 patch 的覆盖关系,用 matplotlib spy 取证(monkeypatch Axes.plot 记录 data 坐标 + transData 像素坐标),不要靠看图反复猜。**不给标签画引线(leader line)**(用户定性为设计失误):名称与模型对应不清时,修元素本身的可见性与归属,不加横跨 coverage 环的连线。改环形版代码先读懂现有绘制逻辑再动手,删除已失真的旧注释(描述旧行为的注释会误导后续修改),不要在失真注释下叠补丁。**fragment join 不画专门刻度**:覆盖环白色间隙 + 截断基因 // 已双重表达,第三种标记(珊瑚色刻度)是冗余,用户明确删过。改完必跑渲染验证+视觉放大检查——迭代期用合成 fixture(小 BED + 手写 GTF 片段,含完整基因、带内部 exon 的截断基因、贴边 UTR 各一,`apptainer exec` 秒级出图)先验证几何与语义,再上真实数据核对计数。环形版的标签布局教训(环绕感知贪心、径向堆叠、SAT 碰撞检测须在 set_xlim 之后跑、旋转文字 AABB 高估须反转投影求真实长、外显子/基因体先裁剪到片段范围防巨弧、长内含子画双斜杠断线、微型基因强制分区画圆点而非不画)详见 decoil-visualization skill;线性布局天然免疫这些几何坑。of max or min must be given`——一律用 `np.clip(arr, min, None)` 函数形式。**输出形态(用户定稿):一个 ecDNA 一张独立大图**——`--one-file-per-cycle` 生成 `<prefix>_circ<id>.<fmt>`(8×8 in 方图,适合 PPT 单页展示),`Params.decoil.structure.one_file_per_cycle` 默认 true;汇总网格图 rule 输出声明的 `decoil_structure.png` **仍必须生成**(Snakemake MissingOutputException 会挂掉 rule),单环图作为附加产物;per-cycle 输出目录不存在会 FileNotFoundError,先 makedirs。
+GTF 功能层加载:主入口 `load_gtf_all_features(path)` **单遍扫描**同时返回 genes/exons/utrs 三个 DataFrame(大 GTF 上 4 遍扫描 5.8s → 单遍 3.1s;**不加载 CDS**,用户明确否定);通用接口 `load_gtf_features(path, feature_type)` 第二参接受 str 或 tuple 保留备用。gffutils 建库在这个场景是负优化:151 万行 GTF 建库 145s(1.45GB .db)+ 查询 9.8s,对比单遍解析 3.1s——只有"同库多次增量区间查询"才值得建库,每次全量加载不要用。decoil.sif 里没有 gffutils,脚本顶层 `import gffutils` 会直接 ModuleNotFoundError——必须 try/except 可选导入(create_db 在 decoil_structure 中从未被调用)。容器内跑法:`apptainer exec --bind /data/pub:/data/pub /data/pub/<USER>/Database/env/decoil/decoil.sif python <script>` + 完整 CLI 参数(sample/ecdna-bed/summary/gtf/bw/o/max-per-fig/one-file-per-cycle/-f png)。
+- decoil 输出文件语义(源码核实):`summary.txt` 的 `label=ecDNA` **纯尺寸判定**——size > 0.1 Mb(`ECDNA_MINSIZE`),与复杂度无关;`reconstruct.ecDNA.filtered.bed` = label=ecDNA 且 score ≥ FILTER_SCORE(源码默认 0,项目 config 设 5,故 summary 有 ecDNA 行而 filtered BED 缺环时先查 filter_score);`graph.gpickle` = pickle 的 MultiGraph 片段组装图(中间产物,调试用);`reconstruct.json` = 最全结果(score/conf/topology 细节),summary 和 bed 均由它派生;`reconstruct.links*.txt` = 环内 fragment 首尾连接,给环形可视化工具用;`reconstruct*.fasta` = 环序列。score(estimated_proportions)≈ 环丰度;structure 图的数据源链 = summary.txt(ecDNA 行)⇔ reconstruct.ecDNA.filtered.bed,画前核对两者 circ_id 一致。
+- `decoil_compare`(聚合):跨样本 counts/尺寸叠加/topology 堆叠 + shared/unique 区域表(键 = 完整坐标 `chr:start-end` 字符串,不缩写)。
+- `decoil_igv`(每样本):生成 track.py igv 模式所需 config(`decoil_igv_config.py`)+ 调 track.py --mode igv → 交互 HTML,locus 默认 = 最大 ecDNA 区域。
+- `decoil_ucsc`(每样本):track.py --mode ucsc 生成 UCSC track 线文件(coverage bigwig + ecDNA BED)→ `visualization/ucsc_track.txt`。
+- decoil.sif 里有 matplotlib+pandas,但 apptainer exec 必须显式 `--bind /data/pub:/data/pub`,否则模块路径不可见。
+- 出图后用视觉检查渲染质量(标签重叠/截断/乱码),并与 summary.txt 原始计数核对,再报告完成。
+- 展示形态定稿:一个 ecDNA 一张独立大图(`--one-file-per-cycle`,8×8 in 方图,`<prefix>_circ<id>.<fmt>`,`Params.decoil.structure.one_file_per_cycle` 默认 true)——多环聚合网格对密集标签天然不利,per-cycle 大图优先,网格页只作 rule 输出的汇总图。注意:per-cycle 模式下汇总 png 仍必须生成(rule 声明的输出,缺了报 MissingOutputException);输出目录不存在先 makedirs。
+- ecDNA 片段合并:BED 按 (sample_id, circ_id) groupby 取 min(start)/max(end);不同样本起点差 1bp 会使 shared 表把它们判为 unique——是坐标本身差异,不是 bug。
+- decoil 数据源链:结构图数据源 = summary.txt(label=ecDNA 行)⇔ reconstruct.ecDNA.filtered.bed;label 判定纯尺寸(>0.1Mb 即 ecDNA),config filter_score=5(源码默认 0)——summary 有 ecDNA 行而 filtered BED 缺环时先查 filter_score。graph.gpickle=片段组装图(中间产物),reconstruct.json=最全结果,links*.txt=环内 fragment 连接(给可视化工具),fasta=环序列。
+
+## 60. Adding a rule to an existing multi-rule module — 5-surface sync + wildcard verification
+
+A new rule in `modules/<tool>/<tool>.smk` is not live until ALL of these are updated — the module import does not pick up new rules automatically:
+1. module `.smk` — rule definition
+2. module `.json` — `Params.<tool>.<rule>` subfields (per-rule param pattern, see config conventions)
+3. subworkflow `<Workflow>.smk` — `use rule <rule> from <tool> as <Workflow>_<rule>`
+4. `node.py` — outfiles entry for the new output
+5. workflow config template `config/<Workflow>.json` — only when params deviate from module defaults
+
+Verification, in order:
+- Dry-run via `run.py -m ... -w <Workflow> --dry-run` (run.py needs snakemake+pandas — use the conda env that has both, e.g. `smk`) and grep the output for the new alias. Missing `use rule` shows up here as zero jobs for the new rule, not as an error.
+- Real-run just the new rule: wildcarded rule names cannot be CLI targets (`Target rules may not contain wildcards`) — pass the concrete output file paths instead: `snakemake -s subworkflow/<W>.smk --configfile <outdir>/raw.json ... /abs/path/{sample}/visualization/new_output.png`.
+- Re-running after editing a rule: mtime triggers may report "Nothing to be done" even when the rule code changed — `touch` an upstream input (e.g. the module's summary.txt) to force the rebuild, or verify the change landed by inspecting the freshly generated `.sh` script in the output dir (it contains the exact cmd the rule built — its content proves which code version ran).
+- If `run.py --test <wf>` fails, check whether the failure is in the test fixture (meta columns, schema files) before blaming your change — fixture failures are independent of module edits.
+
+- Per-cycle side-outputs alongside a declared summary output: if a rule gains a mode that emits extra files but stops writing the declared output (e.g. `--one-file-per-cycle` skipping the summary grid PNG), Snakemake fails with `MissingOutputException` — keep emitting the declared output AND the new side files, or add the side files to `output:`.
+- Rule-code edits that don't change input/output mtimes are invisible to `--rerun-triggers mtime`: `touch` an upstream input (summary.txt) AND pass `--forcerun <Rule>` (or delete the declared outputs) to actually re-execute. Verify which code version ran by reading the freshly generated `.sh` script in the output dir.
+
+
+Two structural rules for workflow/module config JSON, both user-enforced:
+
+1. **Shared cross-module config goes ONE LEVEL UNDER Params, not at top level.**
+   `igv` (browser reference/tracks, consumed by track/igv/decoil-igv rules)
+   lives at `Params.igv` — matching PeakCalling/CLIP. Do NOT put it at the
+   config top level. Subworkflows forward it as
+   `"igv": config.get("Params", {}).get("igv", {})` inside the module config
+   dict; modules read `config.get("Params", {}).get("igv", {})`.
+
+2. **Multi-rule modules nest per-rule params under the module's parent key.**
+   Do NOT invent a sibling flat key (e.g. `Params.visualization`) for one
+   rule's params of a module whose params live under `Params.<module>`.
+   Pattern: `Params.<module>.<rule>.*` for rule-specific params
+   (`Params.decoil.{reconstruct, plot, compare, igv.locus}`), shared params
+   (`formats`) at the parent `Params.<module>` level. Rules resolve via a
+   fallback helper (rule subfield → parent field → default) so legacy flat
+   keys keep working.
+
+**Sync ALL THREE config surfaces when adding params:** module template
+`modules/<tool>/<tool>.json`, workflow template `config/<Workflow>.json`, and
+the subworkflow's forwarding dict. Adding to only the module template makes
+`config.get(...)` silently fall back to code defaults in real runs — the
+workflow template key check (pitfall #51 pattern) must cover the workflow
+template too, not just the module template.
+
+## 61. Debug the script copy that actually ran — workflow trees are forked
+
+Per-project copies of `workflow/Omics` on this host diverge silently (two
+copies once differed by 216 lines while believed identical). When an
+application log carries a traceback: first resolve WHICH script the job
+ran — read the generated runner `.sh` in the output dir (it embeds the
+python script path) or the snakemake command line in the log — then
+`md5sum`/`diff` that file against your working copy before reasoning about
+line numbers or patching. Patch the copy that executed, then port the fix
+to sibling copies (diff them; never assume they match). A fix landed only
+in an unexecuted fork changes nothing for the failing run.
+
+Related scRNAseq.py bug pattern (applies to any forked module script):
+AnnData exposes NO `.loc` accessor — `adata.loc[...]` raises
+AttributeError; write `adata.obs.loc[...]`. Such restore-block bugs hide in
+iteration ≥ 2 paths: a run can annotate every cluster cleanly, then crash
+when a discontinuous cluster triggers re-clustering — verify fixes with
+data that exercises the second iteration, not just a clean first pass.
+When restoring raw counts for re-clustering, also re-attach `obsm`
+embeddings (UMAP…) from the saved copy so per-iteration plots stay
+comparable.
 
 ## 32. Examine existing outputs before creating new reports

@@ -41,7 +41,13 @@ Based on [Cocoon AI's architecture-diagram-generator](https://github.com/Cocoon-
 1. User describes their system architecture (components, connections, technologies)
 2. Generate the HTML file following the design system below
 3. Save with `write_file` to a `.html` file (e.g. `~/architecture-diagram.html`)
-4. User opens in any browser — works offline, no dependencies
+4. **Verify the actual render before delivering** (full recipe in the `visual-render-verification` skill):
+   ```bash
+   google-chrome --headless=new --disable-gpu --no-sandbox \
+     --window-size=1400,2600 --screenshot=/tmp/diagram.png file:///abs/path/to/file.html
+   ```
+   Then inspect the PNG with `vision_analyze`: text overlap, arrows crossing boxes, legend placement/collision, CJK tofu, clipped bottom. Fix → re-screenshot → re-inspect until clean. Only claim done on what you actually saw.
+5. User opens in any browser — works offline, no dependencies
 
 ### Output Location
 
@@ -78,6 +84,7 @@ Use specific `rgba` fills and hex strokes to categorize components:
 
 ### Typography & Background
 - **Font:** JetBrains Mono (Monospace), loaded from Google Fonts
+- **CJK/non-Latin labels:** JetBrains Mono has no CJK glyphs. When labels are Chinese etc., extend the font stack so the browser falls back cleanly: `font-family: 'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', monospace;` (browsers fall back per glyph, so mixed zh/en lines work). CJK chars are ~1× font-size wide — budget width accordingly (see visual-render-verification for the width math).
 - **Sizes:** 12px (Names), 9px (Sublabels), 8px (Annotations), 7px (Tiny labels)
 - **Background:** Slate-950 (`#020617`) with a subtle 40px grid pattern
 

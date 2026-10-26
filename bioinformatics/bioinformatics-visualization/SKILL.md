@@ -167,6 +167,38 @@ for sv in pivot.index:
     stars[sv] = p_to_star(best_p)
 ```
 
+## Genome Browser Element Conventions (gene structure plots)
+
+When plotting gene structure on DNA-level figures (circular ecDNA maps, SV context plots):
+
+- **Shape = element identity.** Exon: solid full-height bar. Intron: thin connector line (~8% of exon width). UTR: same band as exon but paler (white overlay ~65% alpha on the gene-colour block) — never a separate half-height block layered on top; layered blocks read as unrelated elements.
+- **UTR coordinates in GENCODE exons include the UTR span** — the exon block is the full exon; overlay the UTR interval paler rather than drawing UTR as an extra feature, otherwise blocks look inflated.
+- **Gene-level truncation marks (`//`) go only on the gene span ends at the cycle junction** — never per-exon/per-UTR. Per-feature boundary checks misfire on terminal UTRs (they sit exactly on clip boundaries) and scatter `//` across internal features, which readers read as extra junctions.
+- **Proportions are read literally by reviewers**: the intron connector must be visibly thinner than the exon block; if the two widths are within ~2x, users complain the intron is 'thicker than the exon'. Keep connector width ≤10% of the block width.
+- **Legends list functional elements, not miniature models.** One horizontal straight swatch per element (exon / intron / UTR / coverage / break), same width-height ratios and opacity as the plot. No arc-shaped or curved legend samples (a lone arc has no frame of reference), no colour duplicates — all gene elements share the gene colour; shape and opacity carry the distinction, colour does not. State marks (oncogene highlight, junction break) are conditional entries, shown only when present.
+- **Don't draw redundant junction markers**: if the data layer already shows fragment joins (e.g. white gaps in a coverage ring) and `//` marks clipped genes, a third dedicated tick/mark at every join point is triple encoding — remove it.
+
+### Circular Genome Map Radii (CGView-style)
+
+Declarative width/radius constants at module top; users tune proportions by editing constants, so name and comment them clearly:
+
+```python
+R_RULER = 1.0    # outer tick ruler
+R_COV_OUT = 0.90 # coverage ring outer
+R_COV_IN = 0.72  # coverage ring inner
+R_GENE = 0.60    # outermost gene lane
+LANE_W = 0.13    # gene lane width
+EXON_W = 0.10    # exon block radial width
+INTRON_W = 0.008 # intron line width (~8% of EXON_W)
+```
+
+- Map genomic intervals to angles through one central helper (`interval -> (a0, a1)`); per-feature recomputation must reuse it or arcs misalign with blocks.
+- Multiple genes on one circle: greedy lane assignment longest-arc-first; collision test on angular overlap.
+
+### One Pass Over Large GTFs
+
+Loading gene + exon + UTR features from a full GENCODE GTF: read the file ONCE and bucket by feature type in the same loop (4 separate passes over a 700 MB GTF ≈ 6 s; 1 pass ≈ 3 s; gffutils build ≈ 145 s + 1.5 GB db — worse for one-shot full loads, only worth it for repeated incremental region queries). gffutils may be absent from the runtime container anyway — keep optional: `try: import gffutils except ImportError: gffutils = None` when a function using it is never called by the CLI.
+
 ## Pitfalls
 
 ### Parallel plotting: use ProcessPoolExecutor, never ThreadPoolExecutor
@@ -212,3 +244,13 @@ Never hardcode `group_order[0]` / `group_order[1]`. Always iterate with `enumera
 - Dict params instead of paired lists: `condition_files: Dict[str, str]` not `files: List[str], names: List[str]`
 - Use `from __future__ import annotations` for forward refs
 - All functions get NumPy-style English docstrings
+
+## Verify Plot Refactors Inside the Execution Container
+
+Matplotlib/pandas deps usually live in the pipeline's SIF, not the host. Smoke test with synthetic fixtures (2 fragments + a 3-gene GTF covering intact / truncated / UTR-bearing genes) via:
+
+```bash
+apptainer exec --bind /tmp/fixtures:/smoke --bind <repo>:/proj <env.sif> python /smoke/run_test.py
+```
+
+and inspect the PNG with vision analysis, checking specific claims (symbol positions, legend correspondence, colour separation) rather than trusting exit code 0.

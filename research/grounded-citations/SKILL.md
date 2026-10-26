@@ -239,6 +239,15 @@ and read the `info: stats:` line to see the counts before picking a number.
   retrieval, not more markers.
 - **Hand-editing the Sources block.** Use `render --replace-in <draft>`; slicing
   the file yourself risks a stale or duplicated block that `verify` then flags.
+- **Attributing a method to a paper without reading its Methods.** Method,
+  pipeline, and threshold claims live in the Methods section, not the abstract —
+  fetch the full text and locate the pipeline by grepping for tool names
+  (aligners, callers, version strings) before writing "paper X does Y". A
+  misattributed method is the claim a domain expert checks first.
+- **web_extract head+tail truncation on long publisher pages.** The Methods
+  section often sits in the truncated middle. Fallback: `curl -sL <url>` the raw
+  HTML, strip `<script>`/`<style>`/tags, and regex-search for the tool/keyword —
+  major publishers (e.g. Nature) serve the full Methods in the initial HTML.
 
 ## Verification
 

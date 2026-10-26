@@ -4,13 +4,25 @@
 
 ```
 modules/function/
-  function.smk          # Two rules: function_go_kegg, function_gsea
+  function.smk          # Three rules: function_go_kegg, function_gsea, function_gsva
   function.json         # Config template
   function.yaml         # Conda env (clusterProfiler, fgsea, enrichplot, etc.)
+  polygenomes/
+    function.smk        # Multi-genome version ({genome} wildcards)
   bin/
     go-kegg.r           # CLI with argparse, reads DESeq2 .name.tsv
     gsea.r              # CLI with argparse, reads raw DESeq2 .tsv
+    normalization.py    # featureCounts → TPM/CPM/FPKM (--gtf --convert-gene-name)
+    gsva.py             # Pure Python GSVA: scores TSV + clustered heatmap
 ```
+
+Naming convention (user-corrected): `modules/<tool>/<tool>.smk` is the
+**single-genome version** (单基因组版本), `modules/<tool>/polygenomes/<tool>.smk`
+is the **multi-genome version** (多基因组版本). Never call them old/new — both
+are maintained. Multi-genome rules carry `{genome}` wildcards and per-genome
+config keys (`Params.function.<genome>.*`, `genome.references.<genome>.*`);
+single-genome rules use flat paths and flat config keys (`Params.function.*`,
+`genome.gtf`, `genome.geneIDAnno`).
 
 ## Subworkflow integration (RNAseq.smk)
 
@@ -73,6 +85,32 @@ Function rules use `{control_group_name}` and `{experimental_group_name}` — id
     }
 }
 ```
+
+## function_gsva rule (both versions)
+
+GSVA is pure Python (no R GSVA package): featureCounts counts →
+`normalization.py --method tpm --gtf <gtf> --convert-gene-name` →
+`gsva.py -i <tpm> -g <gmt> -o <outdir> --title ...` →
+`gsva_scores.tsv` (geneset × samples) + `gsva_heatmap.png`.
+
+- Config: `Params.function.<genome>.gsva.gmt` (multi-genome) /
+  `Params.function.gsva.gmt` (single-genome). Missing GMT → friendly ValueError
+  in the input function.
+- Multi-genome counts input: `counts_dir + "/{genome}/{genome}_featureCounts.tsv"`
+  (produced by `featureCounts_merge` in `modules/featureCounts/polygenomes/`).
+- Single-genome counts input: `counts_dir + "/all_paired_featureCounts.tsv"`
+  and/or `all_single_featureCounts.tsv` chosen via `paired_samples`/
+  `single_samples` config lists; PE+SE merged by Geneid inside the run block
+  (single-genome featureCounts module has no merge rule).
+- Outputs land in `<function_outdir>/gsva/` (single) /
+  `<function_outdir>/{genome}/gsva/` (multi), matching the report module's
+  expected `function/gsva/gsva_scores.tsv` paths.
+- Commands written to a generated .sh must use `shlex.quote` — the plot title
+  contains spaces/parens.
+
+Pitfall (fixed 2026-10): `featureCounts_merge` PE+SE branch uses `re.sub` —
+`re` must be imported in the .smk (common.smk does NOT provide `re`). User fixed
+by adding `import re` at the top of `modules/featureCounts/polygenomes/featureCounts.smk`.
 
 ## go-kegg.r CLI
 
