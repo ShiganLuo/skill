@@ -145,6 +145,25 @@ Do NOT jump to "it was killed by OOM" without checking that the expected diagnos
 
 When a command/script fails in standalone execution, focus on the failure evidence (logs, exit codes, output files). Do NOT start by examining the pipeline/workflow/orchestration code that wraps it — if the unit test fails, the pipeline is irrelevant until the unit works. The user's framing ("单独执行会失败" / "standalone execution fails") is a hint to look at the command itself first.
 
+#### Visual / external-rendering bugs: get the screenshot first, theorize second
+
+When the bug is "X doesn't display correctly in tool/browser/IDE/dashboard", the most common failure mode is **rotating through text-only hypotheses (auto-scale, viewLimits, file format, assembly mismatch, URL expiry…) without ever actually looking at the rendered output**. Each hypothesis is plausible on paper and unverifiable without seeing the pixels.
+
+Symptoms you're in this trap:
+- User says "doesn't display" or "track invisible" or "blank"
+- You propose a fix, user says "still doesn't work", you propose another
+- You've never looked at what the user is actually seeing
+- Each new theory addresses the *symptom description*, not an observed artifact
+
+What "Phase 1 reproduction" means here:
+
+1. **Get the rendered output.** Screenshot (browser tool, headless capture), export to a local viewer (IGV, matplotlib), or have the user paste an image. If the artifact is a file on disk, render it locally and look at it — don't trust your tool's interpretation of its contents.
+2. **Local equivalent of the renderer.** If the bug is "UCSC doesn't show this bigwig region", open the bigwig in IGV/pyGenomeTracks/your-own matplotlib script on the same coordinates. If the local render matches the user's bad view, the file is the problem. If the local render is fine, the rendering tool is the problem.
+3. **Observe the specific symptom, don't paraphrase.** "轨道看不见" (track invisible) is not the same as "values rendered as a flat line" (auto-scale too small) is not the same as "wrong region entirely" (coordinate bug). Each demands a different fix. A short multiple-choice question to the user — "is it (A) blank, (B) flat line, or (C) wrong content?" — beats three rounds of speculation.
+4. **Stop theorizing once you've failed twice.** Two wrong hypotheses in a row with no new evidence means you're not investigating, you're guessing. Take a step back: ask the user for the actual rendered image, or render it yourself in a tool you control.
+
+If you genuinely cannot get the rendered output (bot wall, missing tool, the user has gone offline), say so explicitly and stop. Do not produce a parade of untested "could it be X? or Y?" theories — the user will try each one, watch each fail, and lose trust.
+
 ---
 
 ## Section B: Python Debugger (pdb + debugpy)

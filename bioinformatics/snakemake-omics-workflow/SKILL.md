@@ -5,57 +5,17 @@ description: Add new modules, subworkflows, and pipelines to the Omics Snakemake
 
 # When to use
 
-- New Omics workflow/pipeline/module/subworkflow work.
+- User asks to implement a new workflow/pipeline in the Omics Snakemake project
+- User asks to port a Nextflow (nf-core) pipeline to Snakemake
+- User asks to add a new tool module to `workflow/Omics/modules/`
+- User asks to create a new subworkflow in `workflow/Omics/subworkflow/`
 
-# Core workflow discipline
+# User preference: proactive error fixing
 
-Trace the full DAG first. Keep modules atomic, subworkflows orchestration-only. For proteomics/DIA work, treat vendor `.raw` ingestion as a front-end conversion problem: add a thin `raw2mzml` module and keep `QuantMS` on mzML. Use a manifest keyed by `sample_id` + `raw_path` + assay metadata, then pass `raw_files`/`mzml_files` through `node.runQuantMS()`. Design principle: YAML filename stem for lookups, NOT file content parsing. the `name:` field inside the YAML (user corrected: avoid unnecessary I/O). When stem != SIF name, user adds explicit config mapping.
+When reviewing logs or identifying errors, **fix them immediately** — do not just report them. The user expects the agent to take initiative: find the error, understand the root cause, apply the fix, and verify. "I found an error but didn't fix it" is unacceptable. Always trace the error back to the source code and patch it.
 
-For vendor `.raw` proteomics ingress, see `references/proteomics-raw2mzml.md`. For QuantMS `MissingInputException` / path-contract debugging, see `references/quantms-dag-path-contracts.md`. For SIF container build failures (conda PATH leakage, plugin errors, solver issues, openms vs openms-thirdparty), see `references/apptainer-sif-build-pitfalls.md`. For `use rule` pitfalls (variable scoping, empty input, argparse), see `references/use-rule-pitfalls.md`. For dual-mode rules (resource-based vs download-based index building), see `references/dual-mode-rules.md`. For OpenMS module consolidation (shared SIF for identical-env modules), see `references/openms-module-consolidation.md`.
-- **Subworkflows only orchestrate.** A `subworkflow/<workflow>.smk` may construct `*_config` dictionaries, declare `module`, expose rules with `use rule`, select optional branches, derive `outfiles`, and define `rule all`. It must not contain executable analysis rules.
-- **Extend the correct parent module.** If an existing tool module is close but has incompatible semantics, add a focused submodule under that tool (for example, `modules/gatk/gatk_population/` sharing `../gatk.yaml`) rather than bypassing the module layer with direct rules.
-- **Package every new module.** Add the `.smk`, `.json`, and `.yaml` files unless it is a documented child module sharing its parent's environment.
-- **Use the canonical `run:` body visibly in each rule.** Preserve log clearing, `setup_logger`, timestamped script names, list-based command construction, conditional `cmd += [...]`, `try/except`, and re-raise. Do not hide these project conventions behind a generic helper merely to shorten the file.
-- **Verify architecture as well as syntax.** A focused check should assert that the subworkflow has only `rule all`, implementation rules live in atomic modules, old mega-modules are absent, and a fully enabled optional-feature DAG dry-runs successfully.
-
-See `references/population-pipeline-module-boundaries.md` for a concrete multi-tool population-genomics decomposition and the GATK joint-genotyping compatibility check.
-
-In this Omics repository, put executable `rule` definitions in `modules/<module>/`.
-A `subworkflow/<workflow>.smk` should only assemble the module configuration,
-declare the `module` path, expose rules with `use rule`, and define `rule all`.
-Do not implement analysis rules directly in a subworkflow. This separation is
-important for reuse, namespacing, and consistent module testing.
-
-When a workflow needs a behavior that an existing module cannot provide, add a
-new rule to the appropriate module rather than duplicating it in the
-subworkflow. For example, population joint genotyping needs per-sample
-`HaplotypeCaller -ERC GVCF`, `GenomicsDBImport`, and `GenotypeGVCFs`; an
-existing per-sample filtered-VCF germline module cannot be reused unchanged.
-
-## Project-specific execution style: `run:` is mandatory
-
-Read `references/atomic-module-and-verification.md` before implementation; it is the compact checklist for atomic module boundaries, full config flow, standard `run:`, optional output wiring, and fresh verification.
-
-For this Omics repository, executable rules in new or modified modules/subworkflows must use `run:` blocks, not top-level `shell:` blocks. Within `run:`:
-
-1. Build the command with the available `params`, `input`, `output`, and `threads` values.
-2. Write a reproducible command script under the rule output/log area.
-3. Execute it with `shell()` and redirect to the rule log.
-4. Check expected outputs when the tool produces indexes or marker files.
-
-Follow neighboring modules such as `gatk_prepare.smk` and `gatk_germline.smk`. Keep `ROOT_DIR` in every module config and include the common utilities when a standalone subworkflow needs `setup_logger` or shared imports.
-
-### Joint germline calling is not the existing germline module
-
-The existing `modules/gatk/gatk_germline/gatk_germline.smk` emits per-sample filtered VCFs and does not use `-ERC GVCF`; it is therefore not a drop-in implementation for population-genomics joint genotyping. For a population workflow, implement or reuse a compatible chain:
-
-`HaplotypeCaller -ERC GVCF → GenomicsDBImport → GenotypeGVCFs → population-level filtering`.
-
-Reuse the existing GATK environment and preparation modules where their input/output contracts match, but do not force the per-sample germline module into a joint-calling DAG merely to claim module reuse.
-
-### Verification gate for new subworkflows
-
-When Snakemake is available, run a dry-run against temporary placeholder BAM/reference/index files and a minimal config containing at least two populations. Also inspect the generated DAG/shell rendering for unresolved inline Python expressions. If the repository has no canonical test, create a temporary `/tmp/hermes-verify-*` probe, clean it up, and report it as ad-hoc verification rather than suite green.
+**However, "proactive" does NOT mean "rash":**
+1. **Understand the full pipeline first** — read the subworkflow, trace the DAG, know what each step does. "你完全不懂这个流程是什么" = unacceptable.
 2. **Never modify a running process's files** — changes won't take effect until restart. Read the error, understand it, then propose the fix for the next run. See pitfall #20.
 3. **Get approval before major structural changes** — removing `conda:`, changing `run:` to `shell:`, or restructuring a module should be discussed, not done silently. See pitfall #19.
 4. **Read the CORRECT log** — snakemake execution log at `.snakemake/log/`, not just the application log. See pitfall #22.
@@ -72,21 +32,18 @@ Before writing any code, load and read these project files:
 These are project-local markdown files, not Hermes skills. Read them with `read_file`.
 
 For ChIP-seq specific patterns (peaks_indir, nested Procedure config, FRiP): see `references/chipseq-module-patterns.md`.
+For deeptools enrichment heatmap module (multi-mode regions, computeMatrix, TSS BED generation): see `references/deeptools-heatmap-module.md`.
+For peak-TE overlap analysis (bedtools intersect, TE class counting, grouped bar chart): see `references/chipseq-te-overlap-module.md`.
 For ChIP-seq QC report PPT generation (data collection, 9-slide structure, pptxgenjs): see `references/chipseq-report-pptx.md`.
 For Python-based report module (python-pptx + matplotlib, modular bin/ scripts): see `references/chipseq-report-python.md`.
-For RNA-seq FASTQ integrity debugging (empty reads, STAR read-input failures, cutadapt minimum_length): see `references/rna-seq-fastq-integrity.md`.
 For serving IGV track HTML via nginx (internal IP access, URL mapping): see `references/nginx-igv-serving.md`.
 For IGV track module modes (single vs iCLIP, auto-grouping): see `references/igv-track-modes.md`.
 
-For ncRNAseq small RNA three-pass STAR alignment (canonical gene extraction, multi-pass re-alignment): see `references/ncrna-three-pass-star.md`.
+For ncRNAseq small RNA three-pass STAR alignment (canonical gene extraction, multi-pass re-alignment, Tailer 3' end analysis): see `references/ncrna-three-pass-star.md`.
 For SRA data download scripts (ascp vs prefetch, meta file format, run.sh integration): see `references/sra-download-scripts.md`.
 
-For comparison-group semantics and `design` reuse (group-style vs ctr/exp-style workflows, many-to-many grouping, compatibility derivatives): see `references/comparison-groups.md`.
 For converting legacy `shell:` rules to `run:` blocks (batch migration checklist, pitfalls, verification): see `references/shell-to-run-conversion.md`.
 For config schema validation and test path generation via SchemaValidator: see `references/schema-validator.md`.
-For metadata grouping vs comparison design semantics (`group` vs `design`), see `references/meta-group-design-separation.md`.
-For conda channel-resolution / strict-priority triage and STAR FASTQ sanity checks: see `references/conda-triage-and-fastq-qc.md`.
-For standalone helper-script pitfalls (argparse vs snakemake.config, proper re-raise): see `references/deseq2-helper-script-and-index-exception.md`. For Cell Ranger scRNAseq module (ref + count + h5ad) and sed-escaping-in-bash pitfall: see `references/cellranger-scrnaseq-module.md`.
 
 # Extension checklist (from skill.md)
 
@@ -231,6 +188,10 @@ logdir = config.get("logdir", "logs")
 outfiles = config.get("outfiles", [])
 samples = config.get("samples", [])
 
+# Genome reference resolution — RNAseq pattern
+genome = config.get("genome", {}).get("default")
+genome_ref = config.get("genome", {}).get("references", {}).get(genome, {})
+
 rule all:
     input:
         outfiles
@@ -245,7 +206,7 @@ tool_config = {
         "<tool>": config.get("Procedure", {}).get("<tool>")
     },
     "genome": {
-        "fasta": config.get("genome", {}).get("fasta")
+        "fasta": genome_ref.get("fasta")
     }
 }
 module <tool>:
@@ -286,7 +247,7 @@ Key conventions:
 3. `dict_set_by_path(workflow_config, ["Params","macs3","pvalue"], "1e-5")` sets nested value
 4. Flat args (no `.`) are merged via `workflow_config.update(flat_args)`
 
-**Pitfall — string values:** Without `--no-schema-validate`, `cast_extra_args()` auto-casts values per schema type. `smart_cast()` lives in `SchemaValidatorUtil.py`.
+**Pitfall — string values:** The value is always a string unless the arg has no value (→ `True`). Numeric config values like `binSize` will be set as string `"50"` not int `50`. If the workflow needs an int/float, the module's `config.get()` or `params:` must cast it.
 
 **Use case:** Override workflow config without editing JSON files:
 ```bash
@@ -409,11 +370,9 @@ Beyond the core loaders, the report can also parse:
 - `load_peak_annotation_xlsx(path)` — optional openpyxl-based loader for `Peak_Annotation.xlsx` (Summary, Top30, Promoter_Peaks sheets)
 - TSS distance distribution — parsed from `annotatePeaks.txt` column 10 (Distance to TSS), plotted as histogram
 
-For cellranger_ref example (rule-only-validates pattern), see `references/cellranger-module-pattern.md`.
-
 ## Pitfalls
 
-- **Wrong dirname depth**
+1. **Matplotlib CJK fonts** — DejaVu Sans renders Chinese/Japanese as boxes. Use English labels for all matplotlib plot titles/axis labels. PPT text (python-pptx) renders correctly with CJK because it uses system fonts at display time.
 
 Do NOT use `execute_code` with triple-quoted strings containing Snakemake syntax — the shell backslash escapes and nested quotes cause SyntaxError. Use `write_file` tool directly for each file.
 
@@ -481,8 +440,6 @@ Every module MUST have a `.json` file. The .json defines the config template wit
 
 After creating a module, grep the .smk for all `config.get("key"` calls and ensure each top-level key appears in the .json. Nested keys (e.g. `config.get("Procedure", {}).get("samtools")`) map to nested JSON objects.
 
-If a module is meant to be reusable across workflows, keep the .json minimal but explicit: include every user-facing knob the .smk reads, and avoid relying on implicit defaults hidden in the workflow layer.
-
 ## 10. markdup vs dedup in ChIP-seq / ATAC-seq
 
 **Use `gatk_prepare.smk`** for markdup — it already has `AddOrReplaceReadGroups` + `MarkDuplicates` (GATK4). Do NOT create a new markdup module from scratch. Do NOT use `samtools markdup` as a substitute.
@@ -503,7 +460,7 @@ gatk_prepare_config = {
     },
     "Params": {"gatk": config.get("Params", {}).get("gatk", {})},
     "addReadsGroup": config.get("addReadsGroup", {}),
-    "genome": {"fasta": config.get("genome", {}).get("fasta")}
+    "genome": {"fasta": genome_ref.get("fasta")}
 }
 module gatk_prepare:
     snakefile: "../modules/gatk/gatk_prepare.smk"
@@ -600,32 +557,6 @@ Never use a bare `if params.extendReads:` — this treats `200` the same as `Tru
 
 ## 16. Check cross-references before modifying a module
 
-## 16b. Logging calls are not `print()` — use f-strings or `%s` placeholders
-
-When adding debug output in Python modules (especially `MetaUtil.py`, `run.py`, or helper scripts), do **not** write logging like:
-
-```python
-logger.info("group_pairs:", group_pairs)
-logger.info("sample_pairs:", sample_pairs)
-```
-
-`logging` treats extra positional args as formatting arguments. Without `%s` placeholders, the message is not rendered the way you expect and may never appear in the log file.
-
-Use one of these patterns instead:
-
-```python
-logger.info(f"group_pairs: {group_pairs}")
-logger.info("group_pairs: %s", group_pairs)
-logger.info(f"sample_pairs: {sample_pairs}")
-logger.info("sample_pairs: %s", sample_pairs)
-```
-
-Rule of thumb:
-- `print(a, b)` style is valid for `print`, not for `logger.info`
-- In this project, prefer **f-strings** for logging to match user style
-- If a function clearly executed but expected debug lines are absent from the log, inspect the logging call signature before assuming the code path was skipped
-
-
 When modifying a module `.smk`, always check which subworkflows reference it via `use rule X from <module>`. Changes to rule names, input/output signatures, or param names will break those subworkflows.
 
 ```bash
@@ -643,28 +574,6 @@ Breaking changes:
 - Renaming rules
 - Changing `input:`/`output:` path patterns
 - Changing `params:` names (consumers may override them)
-
-**Never leave a bare `raise e` after a `try/except` in a `run:` block.** If the intent is to rethrow, it must live inside the `except` branch. A common copy/paste bug is:
-
-```python
-try:
-    ...
-except Exception as e:
-    logger.error(f"... {e}")
-raise e   # BUG: executes even after success, and `e` may be undefined
-```
-
-Correct pattern:
-
-```python
-try:
-    ...
-except Exception as e:
-    logger.error(f"... {e}")
-    raise
-```
-
-Also avoid `logger.error(f.write(...))`; `f.write()` returns an integer byte count, not the message.
 
 ## 15. Terminal rules need `output` with `touch()`
 
@@ -746,10 +655,12 @@ grep -n '\${[^{]' module.smk
 snakemake --version  # Must be >= 9.0
 ```
 
-**Snakemake 8.x REJECTS this combination:**
+**Pipeline position:** AFTER Trim Galore, BEFORE STAR alignment:
 ```
-RuleException: Conda environments are only allowed with shell, script, notebook, or wrapper directives (not with run or template_engine).
+1_raw_fastq → demultiplex (dedup_fastq) → Trim Galore (2_trimmed_fastq) → subsample (trimmed_subsampled_fastq) → STAR → ...
 ```
+
+**Correction (2026-07-23):** User clarified subsample must be AFTER Trim Galore, not before. The subsample step operates on trimmed FASTQ, not raw FASTQ. Update `subsample_config.indir` to `trim_galore_config["outdir"]` and downstream STAR configs to `subsample_config["outdir"]`.
 
 **If on 8.x, upgrade first:** `pip install --upgrade snakemake>=9.0`
 
@@ -867,8 +778,6 @@ modules/report/
 ```
 
 The script should be a proper CLI tool with `argparse`, not a notebook-style inline script. This makes it runnable both standalone and via Snakemake.
-
-For RNAseq PPT reports, see `references/rnaseq-report-module.md` for the module shape, wiring pattern, and ad-hoc verification recipe.
 
 ## 27. Image distortion in PPT — use _add_picture() helper
 
@@ -1519,269 +1428,6 @@ Config JSON files (`config/<Workflow>.json`) should have actual path values for 
 
 The test framework will override these with touch files during `--test` mode.
 
-## 48. STAR index `MissingInputException` — `use rule` must import `star_index` alongside `star_align`
-
-When `star_index` outputs `directory(outdir + "/index")` and `star_align` uses an input function `get_star_index()` that returns the same path, Snakemake fails with `MissingInputException`. The root cause is NOT `directory()` type — it's that `star_index` was never imported via `use rule`, so it doesn't exist in the DAG.
-
-**Root cause:** `use rule star_align from star_passN as X` only imports `star_align`. The `star_index` rule from the same module is invisible to the DAG. When `get_star_index()` returns `{outdir}/index` (because `index_dir` is null), Snakemake can't find any rule to produce that path.
-
-**Fix — auto-build when index_dir is null:** Create a dedicated index module and import its `star_index` rule, following the same pattern as `star_smallrna_idx`:
-
-```python
-# In subworkflow, BEFORE any config dicts that reference star_index_dir:
-if not star_index_dir:
-    star_genome_idx_config = {
-        "ROOT_DIR": ROOT_DIR,
-        "outdir": f"{outdir}/genome",       # or "{outdir}/common/3_raw_bam" for non-3pass
-        "logdir": logdir,
-        "Procedure": {"STAR": STAR},
-        "Params": {"STAR": {}},
-        "genome": {"fasta": genome_fasta, "gtf": config.get("genome", {}).get("gtf")}
-    }
-    module star_genome_idx:
-        snakefile: "../modules/star/star.smk"
-        config: star_genome_idx_config
-    use rule star_index from star_genome_idx as ncRNAseq_star_index_genome
-    star_index_dir = f"{outdir}/genome/index"
-
-# THEN create pass configs that capture star_index_dir:
-star_pass1_config = {..., "genome": {"fasta": genome_fasta, "index_dir": star_index_dir}}
-```
-
-**Critical ordering:** The auto-build block MUST execute BEFORE the config dicts are created. Python dict literals capture variable values at creation time (see pitfall #61). If you put the auto-build after the config dicts, they'll have `None`.
-
-**When `star_index_dir` IS set:** The `if not star_index_dir:` block is skipped entirely. The pre-built index is used directly. User can also pre-build manually:
-```bash
-STAR --runMode genomeGenerate --runThreadN 20 \
-     --genomeDir /path/to/star_index \
-     --genomeFastaFiles genome.fa --sjdbGTFfile genes.gtf --sjdbOverhang 100
-```
-
-**Key config key:** `star.smk`'s `get_star_index()` reads `config.get('genome',{}).get('index_dir')`. The subworkflow passes `"index_dir"` in the config dict.
-
-## 48b. `use rule` import scope — only explicitly imported rules exist in the DAG
-
-When using `module X:` + `use rule Y from X as Z`, **only rule Y** is available in the calling workflow. Other rules from the same module (even those that Y depends on internally) are NOT automatically imported.
-
-**Pattern that breaks:**
-```python
-module star_pass1:
-    snakefile: "../modules/star/star.smk"
-    config: star_pass1_config
-use rule star_align from star_pass1 as ncRNAseq_star3p_pass1
-# star_index is NOT imported → if star_align's input function returns
-# a path only star_index produces, MissingInputException results
-```
-
-**Fix:** Import all rules that the DAG needs:
-```python
-use rule star_index from star_pass1 as ncRNAseq_star_index_pass1   # ← add this
-use rule star_align from star_pass1 as ncRNAseq_star3p_pass1
-```
-
-Or (better) create a dedicated index module (see pitfall #48) to avoid redundant index builds across multiple passes.
-
-**General rule:** After importing rules from a module, trace the full dependency chain. For each input function (`get_star_index`, `get_alignment_input`, etc.), check what path it returns and whether a rule in the current workflow can produce that path. If not, import the missing rule.
-
-## 49. Copy-paste contamination in rule aliases
-
-When subworkflows are copied from each other, stale rule alias prefixes persist:
-```python
-# BUG: copied from PeakCalling.smk, prefix not updated
-use rule fastqc from fastqc_raw as PeakCalling_fastqc_raw
-use rule trimming_Paired from trim_galore as PeakCalling_trimming_Paired
-
-# FIX: use the correct subworkflow prefix
-use rule fastqc from fastqc_raw as ncRNAseq_fastqc_raw
-use rule trimming_Paired from trim_galore as ncRNAseq_trimming_Paired
-```
-
-**Detection after copying a subworkflow:**
-```bash
-grep -n "as [A-Z]" subworkflow/<new>.smk | grep -v "as <NewWorkflow>_"
-```
-Any alias not prefixed with the new workflow's name is likely stale.
-
-## 50. Path chain bugs: featureCounts indir and double directory nesting
-
-**Bug 1: indir mismatch.** featureCounts config `indir` must match the aligner's output path:
-```python
-# BUG: featureCounts looks in wrong directory
-featureCounts_config = {"indir": f"{outdir}/ncRNAseq/bam"}  # no rule outputs here
-
-# FIX: point to actual aligner output
-featureCounts_config = {"indir": f"{outdir}/common/3_raw_bam"}  # star output
-```
-
-**Bug 2: double directory nesting.** When a subworkflow's `outdir` already includes the workflow name (e.g., `{output_dir}/ncRNAseq`), adding another level creates `ncRNAseq/ncRNAseq/`:
-```python
-# BUG: outdir is already .../ncRNAseq, adding ncRNAseq again
-featureCounts_config = {"outdir": f"{outdir}/ncRNAseq/counts"}
-# → .../ncRNAseq/ncRNAseq/counts  (double nesting!)
-
-# FIX: outdir already contains the workflow prefix
-featureCounts_config = {"outdir": f"{outdir}/counts"}
-# → .../ncRNAseq/counts  (correct)
-```
-
-**Systematic check:** After defining all module configs in a subworkflow, print/log the full resolved paths and verify no path component appears twice.
-
-## 51. Missing `/` separator in outdir concatenation
-
-A common bug: `outdir + "filename"` instead of `outdir + "/filename"`:
-```python
-# BUG: missing /
-rule featureCounts_result:
-    input:
-        paired = outdir + "all_paired_featureCounts.tsv",   # → ".../countsall_paired..."
-        single = outdir + "all_single_featureCounts.tsv"
-
-# FIX: add /
-    input:
-        paired = outdir + "/all_paired_featureCounts.tsv",
-        single = outdir + "/all_single_featureCounts.tsv"
-```
-
-Also, terminal aggregation rules need `output: touch(...)` or Snakemake treats them as always dirty:
-```python
-rule featureCounts_result:
-    input:
-        paired = outdir + "/all_paired_featureCounts.tsv",
-        single = outdir + "/all_single_featureCounts.tsv"
-    output:
-        touch(outdir + "/featureCounts.done")
-```
-
-## 52. Conda `TypeError` during `conda create` (conda 26.x)
-
-Conda 26.1.1 (and possibly other 26.x versions) can fail during `conda create` with:
-```
-TypeError('expected str, bytes or os.PathLike object, not NoneType')
-```
-The transaction appears to complete but then rolls back. The exit code is 0 but the environment is NOT created.
-
-When you see a Snakemake failure, always inspect the per-rule log before changing the workflow. The `.snakemake/log/*.log` file shows the real failing job; the top-level WorkflowError often only wraps several SpawnedJobError instances.
-
-For jobs that shell out to nested tools (e.g. Tailer, STAR), check both the Snakemake execution log and the rule-local log under `logdir/<sample>/...` before concluding the root cause.
-
-**Root cause:** Conda plugin issue. `CONDA_NO_PLUGINS=true` does NOT help (the env var is ignored by the subprocess chain).
-
-**Pattern — which packages trigger it:** Envs with Python packages fail; non-Python envs (STAR, fastqc, samtools, bedtools) succeed. The TypeError occurs during `Executing transaction` → `Rolling back transaction` in conda's post-link hooks.\n\n**Workarounds (tried in order):**\n1. Relax version pins in `.yaml` — strict pins like `cutadapt=5.2` can trigger the solver bug; use `>=` ranges instead\n2. Change `--conda-frontend` default from `mamba` to `conda` in `run.py` (mamba frontend deprecated in snakemake 9.x and causes `Support for alternative conda frontends has been deprecated` warnings + separate errors)\n3. Pre-create the problematic env with `--no-deps` flag: `conda create -p <prefix>/<hash>_ -c conda-forge -c bioconda <tool> --no-deps -y`, then install Python deps via pip wrapper\n4. Install the tool via pip into an existing env: `pip install cutadapt` + create a shell wrapper script in the conda prefix bin/\n5. Downgrade conda: `conda install conda=24.x`\n6. Use `mamba` as standalone (not as conda frontend)\n\n**Additional conda 26.x gotcha — solver config:** If conda reports `You have chosen a non-default solver backend (libmamba) but it was not recognized`, fix with:\n```bash\nconda config --set solver classic\n```\nThis happens when `.condarc` references libmamba but the solver plugin is missing.
-
-**Do not misdiagnose 'same YAML keeps redownloading' without checking the live process.** If a user says Snakemake has been 'downloading envs all night', first verify whether it is repeatedly recreating an existing env or simply stuck creating ONE new env.
-
-Verification sequence:
-```bash
-ps -ef | grep -i '[s]nakemake'
-ps -ef | grep -E '[c]onda|[m]amba|[p]ython.*snakemake'
-ls -lt <workdir>/.snakemake/log/
-# open the newest log matching the current snakemake start time
-```
-
-Then inspect the newest `.snakemake.log` and find the last `Creating conda environment ...` line. If the active child process is:
-```bash
-conda env create --file <conda-prefix>/<hash>_.yaml --prefix <conda-prefix>/<hash>_
-```
-read that generated `<hash>_.yaml` to identify the exact module env that is stuck. This often shows the workflow is blocked on one heavyweight env, not repeatedly failing to reuse an unchanged env.
-
-**What commonly makes one env stall for hours:**
-- too many channels in `.condarc`
-- missing `channel_priority: strict`
-- mixed old / niche channels (`r`, `cdat-forge`, `anaconda`, mirror `pkgs/free`, etc.)
-- bundling optional plotting deps (e.g. `matplotlib-base`) into the runtime env for a tool that does not need them on the main execution path
-
-**Additional conda 26.x gotcha — solver config:** If conda reports `You have chosen a non-default solver backend (libmamba) but it was not recognized`, fix with:
-```bash
-conda config --set solver classic
-```
-This happens when `.condarc` references libmamba but the solver plugin is missing.
-
-**When a single env seems to run forever, inspect the generated yaml and the active child process before editing the workflow.** If the active process is `conda env create --file <conda-prefix>/<hash>_.yaml --prefix <conda-prefix>/<hash>_`, open that generated yaml to identify the exact module/env being solved. A "stuck overnight" report often means one heavyweight env is still resolving, not that Snakemake keeps redownloading the same env.
-
-**When snakemake creates conda envs:** The prefix is `{conda-prefix}/{hash}_` and snakemake checks for `.env_setup_done` marker. If you pre-create the env at that path and touch the marker, snakemake skips creation.
-
-## 54. `--no-conda` fallback when conda is broken
-
-When conda env creation fails persistently (e.g. conda 26.x TypeError, broken plugins, network issues), bypass snakemake's `--use-conda` entirely:
-
-```bash
-# 1. Pre-create a consolidated bin directory with all needed tools
-CONSOLIDATED=/path/to/output/.conda/bin
-mkdir -p "$CONSOLIDATED"
-ln -sf /path/to/star_env/bin/STAR "$CONSOLIDATED/STAR"
-ln -sf /path/to/trim_galore_env/bin/trim_galore "$CONSOLIDATED/trim_galore"
-# ... link all tools ...
-
-# 2. Run snakemake directly without --use-conda
-export PATH="$CONSOLIDATED:$PATH"
-cd /path/to/output/workflow_dir
-snakemake -s /path/to/subworkflow.smk \
-    --configfile /path/to/raw.json \
-    --cores 20 \
-    --rerun-triggers input
-```
-
-**Key differences from normal run:**
-- No `--use-conda`, `--conda-prefix`, `--conda-frontend` flags
-- `PATH` must include all tool binaries
-- Conda yaml files in rules are ignored (no env activation)
-- JAVA_HOME may need to be set for tools like fastqc
-
-**When to use:** As a last resort after exhausting conda fixes. The `conda:` directives in .smk files become no-ops without `--use-conda`.
-
-## 55. Subworkflow preamble MUST define ROOT_DIR
-
-Every subworkflow .smk needs `ROOT_DIR` in its preamble, not just in module config dicts. Without it, `decoy_database_config = {"ROOT_DIR": ROOT_DIR, ...}` raises `NameError`.
-
-```python
-# REQUIRED in every subworkflow preamble:
-shell.prefix("set -x; set -e;")
-from snakemake.logging import logger
-import os
-
-ROOT_DIR = config.get("ROOT_DIR", ".")   # ← MUST have this
-indir = config.get("indir", "data/fastq")
-outdir = config.get("outdir", "output")
-# ...
-```
-
-**Why it's easy to miss:** Modules define ROOT_DIR via `common.smk`, so subworkflow authors assume it's inherited. But subworkflow .smk files are NOT modules — they don't include common.smk. Each subworkflow must define ROOT_DIR from config.
-
-**Detection:** Grep for `\"ROOT_DIR\": ROOT_DIR` in config dicts, then verify `ROOT_DIR = config.get` appears earlier in the file.
-
-## 56. Test meta files must use local paths, not server-specific paths
-
-Test meta files (`assests/test/meta_*.tsv`) with hardcoded paths from other servers (e.g. `/rna_seq_1/luoshg/...`) fail on any other machine. The MetadataUtils checks `os.path.exists()` on fastq paths — non-existent paths cause all samples to be skipped silently.
-
-**Fix:** Update all test meta files to use paths under `assests/test/data/fastq/`:
-```python
-# In test meta files, use relative paths that the test framework generates:
-# fastq_1 → assests/test/data/fastq/{sample_id}_1.fq.gz
-# fastq_2 → assests/test/data/fastq/{sample_id}_2.fq.gz
-```
-
-Create touch files at those paths (empty files, just need to exist for `os.path.exists()` check).
-
-**Detection:** After `--test all`, if a workflow reports 0 samples or "have no fastqs, skip it", check the meta file paths.
-
-## 53. `run<Workflow>()` must populate outfiles — empty list = no-op
-
-Every `run<Workflow>()` function in `run.py` MUST build the `outfiles` list. An empty `outfiles = []` means `rule all: input: outfiles` has zero targets, and Snakemake does nothing (silently succeeds with 0 jobs).
-
-**Pattern:** Iterate `samples_info_dict` to build per-sample outputs, then append aggregate outputs:
-```python
-outfiles = []
-for sid in paired_samples:
-    outfiles.append(f"{outdir}/QC/1_raw_fastqc/{sid}/fastqc.raw.txt")
-    outfiles.append(f"{outdir}/common/2_trimmed_fastq/{sid}/{sid}_1.fq.gz")
-    outfiles.append(f"{outdir}/common/3_raw_bam/{sid}/{sid}.bam")
-if paired_samples:
-    outfiles.append(f"{outdir}/counts/all_paired_featureCounts.tsv")
-datajson["outfiles"] = outfiles
-```
-
-**Verification:** After running, check that snakemake reports N > 0 jobs in the DAG. If it reports "Nothing to be done", outfiles is empty.
-
 ## 43. Batch conversion completeness — verify ALL files, not just the first batch
 
 When doing batch refactoring (e.g. shell: → run:, adding conda:), **verify the entire codebase after each batch**, not just the files you modified. The user will catch missed files: "你确定你转换完了吗" (are you sure you finished converting?).
@@ -1838,246 +1484,187 @@ _inject(workflow_config, "", wf_extra)
 - Heuristic: null or contains "/" → treat as path
 - Empty string, numbers, booleans → not paths
 
-## 47b. Preserve `design` syntax; add iterable comparison groups for many-to-many workflows
+## 48. get_star_index os.path.exists breaks dry-run
 
-When workflows evolve from one-to-one comparisons to many-to-many comparisons, do not overload or rewrite `design`.
+`get_star_index()` in `star.smk` checks `os.path.exists(index_dir + "/Genome")`. During `--dry-run`, no files exist → check always fails → falls back to `outdir + "/index"` → triggers unnecessary `star_index` rebuild or MissingInputException.
 
-**Keep `design` syntax unchanged:**
-- `design`: keep the existing role+contrast encoding (`ctr_X` / `exp_X` or `ctrl_X` / `exp_X`)
-
-**Add a separate grouping layer:**
-- store the user-facing comparison-side grouping label separately (`comparison_group`, or map the metadata `group` column onto that field)
-- expose iterable comparison blocks such as `ComparisonGroup` from `src/common/type.py`
-
-**Implementation pattern:**
-- Parse `design` into `(DesignRole, contrast)`
-- Group all samples by `contrast`
-- For each contrast, build one iterable comparison block containing:
-  - `ctr_sample_ids`
-  - `exp_sample_ids`
-  - optional `ctr_group` / `exp_group`
-- Return those comparison groups from `MetadataUtils.run()` so callers can iterate all comparison blocks directly
-- Keep derived `DesignPair` objects only as a compatibility layer for legacy one-control workflows
-
-**Workflow adaptation rule:**
-- New code should iterate `comparison_groups`
-- Old code that still requires a single control may choose the first control temporarily, but MUST log that fallback explicitly
-- Define shared metadata/runtime types in `src/common/type.py`, not ad hoc inside `MetaUtil.py`
-
-Keep helper scripts CLI-driven; if a script is executed from a `run:` block, pass group/sample lists via args instead of importing `snakemake.config`.
-
-## 57. STAR index sjdbOverhang=0 when no GTF
-
-When building a STAR index WITHOUT a GTF (e.g. smallRNA FASTA index for star_3pass pass2), STAR requires `--sjdbOverhang 0`. The default `sjdbOverhang=100` causes:
-
-```
-EXITING because of FATAL INPUT PARAMETER ERROR: when generating genome without annotations
-do not specify >0 --sjdbOverhang
-```
-
-**Fix in `star.smk` `star_index` rule params:**
-```python
-sjdbOverhang = config.get('Params',{}).get('STAR', {}).get('sjdbOverhang') or (100 if gtf else 0),
-```
-
-This reads: use configured value if set, otherwise 100 when GTF exists, 0 when no GTF.
-
-## 58. star_3pass path chain: star.smk output vs star_3pass.smk input
-
-The `star_align` rule in `star.smk` renames output to `.bam`:
-```python
-# star.smk star_align output
-bam = outdir + "/{sample_id}/{sample_id}.bam"
-```
-
-But `star_3pass.smk` rules originally expected `.Aligned.sortedByCoord.out.bam`. ALL input paths in `star_3pass.smk` must use `.bam`:
+**Fix:** Remove the existence check. Always return `index_dir` if set. Snakemake handles DAG dependency resolution:
 
 ```python
-# star_3pass.smk — CORRECT
-input:
-    bam = outdir + "/pass1/{sample_id}/{sample_id}.bam",          # NOT .Aligned.sortedByCoord.out.bam
-    bai = outdir + "/pass1/{sample_id}/{sample_id}.bam.bai",
+def get_star_index(wildcards):
+    star_index_dir = config.get('genome',{}).get('index_dir') or None
+    if star_index_dir:
+        return star_index_dir  # NO os.path.exists check
+    return outdir + "/index"
 ```
 
-Apply this fix to: `star_3p_extract_smallrna`, `star_3p_pass3a_extract`, `star_3p_merge` (noncanonical input).
+**Impact:** Affects ALL workflows using STAR (RNAseq, ncRNAseq, PeakCalling, etc.). Any workflow with a pre-built STAR index will fail dry-run if the index directory doesn't exist yet on disk.
 
-## 59. star_3pass: BAM→FASTQ conversion rules needed for pass3a/pass3b
+## 49. STAR unmapped reads not declared as outputs
 
-The star_3pass pipeline requires converting pass2 BAM to FASTQ for pass3a (mapped reads) and pass3b (unmapped reads). The STAR module doesn't handle this — add two rules to `star_3pass.smk`:
+`star_align` with `--outReadsUnmapped Fastx` produces `*.Unmapped.out.mate1/2` as side effects, but these aren't declared in `output:`. Downstream rules can't track them via the DAG.
+
+**Fix:** Add unmapped files as additional outputs and touch if not produced:
 
 ```python
-rule star_3p_pass2_mapped_to_fq:
-    input:  bam = outdir + "/pass2/{sample_id}/{sample_id}.bam"
-    output: fq  = outdir + "/pass2_fq/{sample_id}/{sample_id}.single.fq.gz"
-    # samtools view -F 4 (mapped) | sort -n | fastq | gzip
-
-rule star_3p_pass2_unmapped_to_fq:
-    input:  bam = outdir + "/pass2/{sample_id}/{sample_id}.bam"
-    output: fq  = outdir + "/pass2_unmapped_fq/{sample_id}/{sample_id}.single.fq.gz"
-    # samtools view -f 4 (unmapped) | sort -n | fastq | gzip
+output:
+    bam = outdir + "/{sample_id}/{sample_id}.bam",
+    bai = outdir + "/{sample_id}/{sample_id}.bam.bai",
+    unmapped_r1 = outdir + "/{sample_id}/{sample_id}.Unmapped.out.mate1",
+    unmapped_r2 = outdir + "/{sample_id}/{sample_id}.Unmapped.out.mate2",
+# In run block, after STAR execution:
+f.write(f"test -f {output.unmapped_r1} || touch {output.unmapped_r1}\n")
+f.write(f"test -f {output.unmapped_r2} || touch {output.unmapped_r2}\n")
 ```
 
-Then in ncRNAseq.smk:
-- pass3a indir = `{outdir}/common/3_raw_bam/pass2_fq`
-- pass3b indir = `{outdir}/common/3_raw_bam/pass2_unmapped_fq`
-- All pass2/3a/3b samples must be in `single_samples` (reads are SE after extraction)
+**When to use:** Only for modules that configure `outReadsUnmapped: Fastx` (e.g. ncRNAseq pass2). For standard alignment, the touch creates empty sentinel files harmlessly.
 
-## 60. star_3pass merged BAM is single-end → featureCounts SE mode
+## 50. Module config dict variable capture timing
 
-After the 3-pass pipeline, the merged BAM contains single-end reads (extracted and re-aligned as SE). featureCounts MUST use SE mode:
+When a subworkflow defines module config dicts, Python captures variable values at dict DEFINITION time, not at USE time. If a variable is `None` when the dict is defined but reassigned later, the dict still holds `None`.
 
+**Real example (ncRNAseq):**
 ```python
-# In subworkflow (ncRNAseq.smk):
-fc_paired = [] if aligner == "star_3pass" else paired_samples
-fc_single = paired_samples + single_samples if aligner == "star_3pass" else single_samples
+smallrna_fasta = config.get("genome", {}).get("smallrna_fasta")  # → None
 
-featureCounts_config = {
-    "paired_samples": fc_paired,
-    "single_samples": fc_single,
-    ...
+star_pass2_config = {
+    "genome": {"fasta": smallrna_fasta}  # Captures None!
 }
 
-# In run.py run<Workflow>():
-aligner = datajson.get("Procedure", {}).get("aligner", "star")
-if aligner == "star_3pass":
-    outfiles.append(f"{outdir}/counts/all_single_featureCounts.tsv")
-else:
-    if paired_samples:
-        outfiles.append(f"{outdir}/counts/all_paired_featureCounts.tsv")
+smallrna_fasta = f"{outdir}/genome/smallrna/smallrna_genes_flank.fa"  # Too late!
 ```
 
-## 61. Python dict value capture timing in subworkflow config dicts
+**Fix:** Always assign derived paths BEFORE defining config dicts that reference them. See `references/ncrna-three-pass-star.md` pitfall #6 for the full ncRNAseq example.
 
-When a subworkflow creates module config dicts, Python captures variable values at dict creation time, NOT at module import time. If derived paths are set AFTER the config dict is created, the dict will have the original (often `None`) values.
+## 52. No conditional rule definitions in module .smk
 
-**Wrong (derived paths defined after config dict):**
+**模块 .smk 中禁止 `if`/`else` 包裹 `rule` 定义。** This is also stated in `modules/modules.md` but agents keep violating it.
+
+**Wrong:**
 ```python
-elif aligner == "star_3pass":
-    star_pass2_config = {"genome": {"fasta": smallrna_fasta}}  # smallrna_fasta is still None!
-    # ... 100 lines later ...
-    smallrna_fasta = f"{outdir}/genome/smallrna/smallrna_genes_flank.fa"  # TOO LATE
+if regions_cfg == "tss":
+    rule generate_tss_bed:
+        input: gtf = gtf,
+        output: bed = outdir + "/_tss_regions.bed",
+        ...
 ```
 
-**Correct (define derived paths FIRST):**
-```python
-elif aligner == "star_3pass":
-    smallrna_fasta = f"{outdir}/genome/smallrna/smallrna_genes_flank.fa"
-    smallrna_bed = f"{outdir}/genome/smallrna/smallrna_genes.bed"
-    smallrna_star_index = f"{outdir}/genome/smallrna/star_index"
-    # THEN create config dicts that reference these variables
-    star_pass2_config = {"genome": {"fasta": smallrna_fasta}}
-```
-
-Also remove any duplicate definitions later in the code that would shadow the correct values.
-
-## 62. star_3pass.smk include path is TWO levels up
-
-`star_3pass.smk` lives at `modules/star/star_3pass/star_3pass.smk`. The include must go up TWO levels to reach `modules/common/`:
+**Correct:** Define ALL rules unconditionally. Let Snakemake's DAG decide which rules to execute based on dependency chains. If nothing depends on `generate_tss_bed`, it won't run.
 
 ```python
-include: "../../common/common.smk"   # star_3pass/ → star/ → modules/ → common/
+rule generate_tss_bed:
+    input: gtf = gtf or "/dev/null",  # safe fallback when gtf is None
+    output: bed = outdir + "/_tss_regions.bed",
+    ...
 ```
 
-NOT `"../common/common.smk"` (which resolves to `modules/star/common/common.smk` — doesn't exist).
+**Why:** Conditional rule definitions break:
+- `use rule` imports in subworkflows (the rule doesn't exist when the condition is false)
+- Static analysis and verification scripts
+- The project's design principle: "模块应该定义所有可能的 rule，由 subworkflow 决定 use rule 哪些"
 
-## 63. featureCounts_result missing `/` separator
+**When you need conditional logic:** Use input functions (e.g. `get_regions(wildcards)`) or runtime `if` inside `run:` blocks — both are fine. Only the `if` wrapping `rule` definitions is forbidden.
 
-The `featureCounts_result` rule concatenates `outdir + "filename"` without `/`:
+## 51. Module .json must include ALL config.get() keys — including genome.*
 
+When a module .smk reads `config.get("genome", {}).get("gtf")` or similar nested keys, the module's .json config template MUST include the `genome` section with those keys. Omitting it breaks automated verification (`.json` key coverage check) and makes the module's config contract incomplete.
+
+**Real example (deeptools_heatmap):** The .smk reads `config.get("ROOT_DIR")`, `config.get("indir")`, `config.get("outdir")`, `config.get("logdir")`, `config.get("samples")`, `config.get("bigwig_dir")`, `config.get("Procedure")`, `config.get("Params")`, AND `config.get("genome")` (for TSS mode GTF). The initial .json missed `genome`, which was caught by verification:
 ```python
-# BUG: produces ".../countsall_paired_featureCounts.tsv"
-input:
-    paired = outdir + "all_paired_featureCounts.tsv",
-
-# FIX:
-input:
-    paired = outdir + "/all_paired_featureCounts.tsv",
+config_keys = set(re.findall(r'config\.get\("(\w+)"', smk)) - {"ROOT_DIR"}
+assert config_keys <= set(json.load(open("module.json")).keys())
+# AssertionError: json missing: {'genome'}
 ```
 
-Also add `output: touch(outdir + "/featureCounts.done")` so Snakemake has a sentinel for up-to-date checking.
-
-## 64. Copy-paste rule prefix contamination
-
-When copying subworkflow code from another workflow, rule alias prefixes must be updated:
-
-```python
-# BUG: copied from PeakCalling.smk
-use rule fastqc from fastqc_raw as PeakCalling_fastqc_raw
-use rule trimming_Paired from trim_galore as PeakCalling_trimming_Paired
-
-# FIX:
-use rule fastqc from fastqc_raw as ncRNAseq_fastqc_raw
-use rule trimming_Paired from trim_galore as ncRNAseq_trimming_Paired
-```
-
-**Detection:** `grep "as [A-Z]" subworkflow/<wf>.smk | grep -v "as <WfName>_"`
-
-## 65. Conda `TypeError` workaround — --no-conda fallback
-
-When conda 26.x fails with `TypeError('expected str, bytes or os.PathLike object, not NoneType')` during `conda create` (especially for Python-dependent packages like cutadapt/trim-galore), bypass conda entirely:
-
+**Fix:** After creating a module, run this check:
 ```bash
-# Pre-create consolidated bin directory with all tools
-CONSOLIDATED=/path/to/output/.conda/bin
-mkdir -p "$CONSOLIDATED"
-ln -sf /path/to/star_env/bin/STAR "$CONSOLIDATED/STAR"
-ln -sf /path/to/trim_galore_env/bin/trim_galore "$CONSOLIDATED/trim_galore"
-# ... link all tools ...
-
-# Run snakemake directly without --use-conda
-export PATH="$CONSOLIDATED:$PATH"
-export JAVA_HOME="/path/to/jvm"
-snakemake -s /path/to/subworkflow.smk --configfile raw.json --cores 20 --rerun-triggers input
+python3 -c "
+import json, re
+smk = open('module.smk').read()
+mj = json.load(open('module.json'))
+keys = set(re.findall(r'config\.get\(\"(\w+)\"', smk)) - {'ROOT_DIR'}
+missing = keys - set(mj.keys())
+if missing: print(f'ERROR: .json missing keys: {missing}')
+"
 ```
 
-Non-Python envs (STAR, samtools, bedtools) succeed. Pre-create those via `conda create --no-deps`. For Python tools, use pip into existing envs + wrapper scripts.
+**Rule:** Every top-level `config.get("X")` call in the .smk MUST have a corresponding `"X": ...` entry in the .json. This includes `genome`, `env`, `paired_samples`, `single_samples`, and any other config keys the module reads.
+
+## 53. Empty schema.json breaks `generate_test_paths` in test mode
+
+An empty `config/<Workflow>.schema.json` (0 bytes) causes `json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)` in `setup_test_args` → `SchemaValidator.generate_test_paths()`. The function iterates ALL `*.schema.json` files and calls `json.load()` on each — one empty file crashes the entire test run.
+
+**Detection:**
+```bash
+for f in config/*.schema.json; do [ ! -s "$f" ] && echo "EMPTY: $f"; done
+```
+
+**Fix:** Write `{}` (minimal valid JSON) to any empty schema files:
+```python
+json.dump({}, open("config/<Workflow>.schema.json", "w"))
+```
+
+**Prevention:** When creating a new workflow, always write `{}` as the initial schema content, not an empty file.
+
+## 54. Genome config must use nested `default` + `references` structure
+
+**Wrong (flat):**
+```json
+"genome": {
+    "fasta": "/path/to/genome.fa",
+    "gtf": "/path/to/genes.gtf",
+    "bowtie2_index_prefix": "/path/to/bowtie2/index"
+}
+```
+
+**Correct (nested, RNAseq pattern):**
+```json
+"genome": {
+    "default": "GRCm39",
+    "references": {
+        "GRCm39": {
+            "fasta": "/path/to/mouse/genome.fa",
+            "gtf": "/path/to/mouse/genes.gtf",
+            "bowtie2_index_prefix": "/path/to/mouse/bowtie2/index"
+        },
+        "GRCh38": {
+            "fasta": "/path/to/human/genome.fa",
+            "gtf": "/path/to/human/genes.gtf",
+            "bowtie2_index_prefix": "/path/to/human/bowtie2/index"
+        }
+    }
+}
+```
+
+**Subworkflow pattern:**
+```python
+genome = config.get("genome", {}).get("default")
+genome_ref = config.get("genome", {}).get("references", {}).get(genome, {})
+# Use genome_ref.get("fasta"), genome_ref.get("gtf"), etc. in all module config dicts
+```
+
+**run.py pattern — auto-detect organism from metadata:**
+```python
+organisms = set()
+for sample_id, sample_info in samples_info_dict.items():
+    if sample_info.organism:
+        organisms.add(sample_info.organism)
+if len(organisms) == 1:
+    organism = next(iter(organisms))
+    if organism in ["Homo sapiens", "human"]:
+        datajson["genome"]["default"] = "GRCh38"
+    elif organism in ["Mus musculus", "mouse"]:
+        datajson["genome"]["default"] = "GRCm39"
+```
+
+**Schema mirrors config:**
+```json
+"genome": {
+    "default": { "type": "str", "required": true },
+    "references": { "type": "dict", "required": true }
+}
+```
+
+**Remove legacy `genomes` field:** Old configs may have `"genomes": ["mm"]` — remove it when migrating to nested structure.
 
 ## 32. Examine existing outputs before creating new reports
-
-## 66. DESeq2 output file variants: .tsv (Ensembl ID) vs .name.tsv (gene_name) - downstream modules must pick the right one
-
-DESeq2's `DESeq2.r` writes results as `TEcount_Gene.tsv` with Ensembl gene_id as rownames (via `write.table(..., col.names=NA)`). Then `gene_id2name.py` (called as `cmd3` in `DESeq2.smk`) converts this to `TEcount_Gene.name.tsv` with a `gene_name` first column and no rownames.
-
-**Different downstream analyses need different variants:**
-- **GO/KEGG enrichment** (`clusterProfiler::bitr`): needs `gene_name` column -> use `.name.tsv`. `bitr(fromType="SYMBOL")` requires gene symbols, not Ensembl IDs.
-- **GSEA** (`fgsea`): needs Ensembl `gene_id` as rownames -> use raw `.tsv`. The `GSEA_prepare()` function does `rownames_to_column("gene_id") %>% left_join(anno, by="gene_id")` where `anno` has `gene_id` (Ensembl). Using `.name.tsv` here silently produces zero rows because gene_name != gene_id in the join.
-
-**Verification:** Trace the R script's column expectations:
-```r
-# gsea.r reads: rownames(df) <- df[[1]]  -> first column becomes rownames
-# If first column is "gene_name" (from .name.tsv), rownames are gene symbols
-# Then left_join(anno, by="gene_id") fails because anno$gene_id is Ensembl
-```
-
-**When wiring a new module after DESeq2:** Always check whether the R script expects Ensembl IDs (use `.tsv`) or gene symbols (use `.name.tsv`). This is a path-chain correctness issue, not a style preference.
-
-## 67. Conditionally enabling an optional module in a subworkflow
-
-When a module is optional (e.g., function analysis after DESeq2), gate it behind an `enabled` flag in the subworkflow:
-
-```python
-if config.get("Params", {}).get("function", {}).get("enabled", False):
-    logger.info("Function analysis enabled (GO/KEGG + GSEA)")
-    function_config = {
-        "ROOT_DIR": ROOT_DIR,
-        "indir": DESeq2_config["outdir"],      # chain from upstream
-        "outdir": f"{outdir}/function",
-        "logdir": logdir,
-        "group_pairs": config.get("Params", {}).get("DESeq2", {}).get("group_pairs"),
-        "genome": {"geneIDAnno": config.get("genome", {}).get("geneIDAnno")},
-        "Params": {"function": config.get("Params", {}).get("function", {})}
-    }
-    module function:
-        snakefile: "../modules/function/function.smk"
-        config: function_config
-    use rule function_go_kegg from function as RNAseq_function_go_kegg
-    use rule function_gsea from function as RNAseq_function_gsea
-```
-
-Key points:
-- Default `enabled: false` in config JSON so existing runs are unaffected
-- `group_pairs` is passed through from `Params.DESeq2.group_pairs` so the module knows which comparison pairs exist
-- In `run.py`, conditionally append function outputs to `outfiles` only when enabled
-- The module's `indir` chains from `DESeq2_config["outdir"]` (same pattern as all path chains)
-
-For the full function module integration pattern (go-kegg.r CLI, gsea.r CLI, wildcard matching, config/schema/run.py changes), see `references/deseq2-to-function-module-chain.md`.

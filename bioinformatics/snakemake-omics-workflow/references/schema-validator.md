@@ -1,33 +1,44 @@
-# SchemaValidator — Config Schema Validation, Type Casting & Test Path Generation
+# SchemaValidator — Per-Workflow Config Schema Validation & Test Path Generation
 
 ## Overview
 
-`src/common/util/SchemaValidatorUtil.py` provides:
-1. **Config validation** — `validate()` checks required/nullable
-2. **Path field discovery** — `get_path_fields()` finds all `path: "file"/"dir"/"prefix"` fields
-3. **Test path generation** — `generate_test_paths()` creates placeholder files for dry-run
-4. **CLI extra_args type casting** — `cast_extra_args()` casts CLI values to schema-declared types + validates paths
-5. **Field type lookup** — `get_field_type(dotted_key)` resolves schema type for any dotted key path
-
-Each workflow has `config/<Workflow>.schema.json` mirroring its `config/<Workflow>.json`.
+`src/common/SchemaValidator.py` validates workflow configs and generates test paths.
+Each workflow has its own schema file: `config/<Workflow>.schema.json` that mirrors the config structure.
 
 ## Schema File Structure
 
+Each `config/<wf>.schema.json` mirrors its `config/<wf>.json` structure:
+
 ```json
 {
-  "ROOT_DIR": {"type": "null", "nullable": true, "required": false},
-  "indir":    {"type": "null", "nullable": true, "required": false},
+  "ROOT_DIR": {"type": "str", "path": "dir", "required": true, "nullable": false},
+  "indir":    {"type": "str", "path": "dir", "required": true, "nullable": false},
+  "outdir":   {"type": "str", "path": "dir", "required": true, "nullable": false},
+  "logdir":   {"type": "str", "path": "dir", "required": true, "nullable": false},
+  "samples":  {"type": "list", "required": true},
   "paired_samples": {"type": "list", "required": true},
+  "single_samples": {"type": "list", "required": true},
+  "outfiles": {"type": "list", "required": true},
   "genome": {
     "fasta": {"type": "str", "path": "file", "nullable": true, "required": false},
     "gtf":   {"type": "str", "path": "file", "nullable": true, "required": false},
     "hisat2_index_prefix": {"type": "str", "path": "prefix", "nullable": true, "required": false},
     "star_index_dir":      {"type": "str", "path": "dir",    "nullable": true, "required": false}
-  },
-  "Params": {
-    "macs3": {
-      "pvalue": {"type": "str", "required": false},
-      "bw": {"type": "int", "required": false}
+  }
+}
+```
+
+For nested genome configs (CoCulture dual-species):
+```json
+{
+  "genome": {
+    "GRCm39": {
+      "fasta": {"type": "str", "path": "file", "nullable": true, "required": true},
+      "gtf":   {"type": "str", "path": "file", "nullable": true, "required": true}
+    },
+    "GRCh38": {
+      "fasta": {"type": "str", "path": "file", "nullable": true, "required": true},
+      "gtf":   {"type": "str", "path": "file", "nullable": true, "required": true}
     }
   }
 }
@@ -37,183 +48,185 @@ Each workflow has `config/<Workflow>.schema.json` mirroring its `config/<Workflo
 
 | Key | Values | Meaning |
 |-----|--------|---------|
-| `type` | `str`, `list`, `int`, `float`, `bool`, `null`, `dict` | Expected Python type |
-| `path` | `file`, `dir`, `prefix` (omit for non-paths) | Path classification |
+| `type` | `"str"`, `"list"`, `"int"`, `"float"`, `"bool"`, `"null"` | Expected Python type |
+| `path` | `"file"`, `"dir"`, `"prefix"` (omit for non-paths) | Path classification |
 | `nullable` | `true`/`false` | Whether `None` is acceptable |
 | `required` | `true`/`false` | Whether field must exist and be non-empty |
 
 ### Path type semantics
 
-- **file** — single file (fasta, gtf, BED, VCF, SIF container)
-- **dir** — directory (star_index_dir, cellranger_ref_dir)
+- **file** — single file (fasta, gtf, BED, VCF, etc.)
+- **dir** — directory (star_index_dir, smallrna_star_index)
 - **prefix** — multi-file index prefix (hisat2 8-file, bowtie2 6-file, bwa-mem2 5-file)
 
-### Genome structure styles
+### Design principle
 
-Three styles exist across workflows:
+Schema mirrors config structure exactly. No inheritance, no merging, no overrides.
+Each workflow is self-contained. If two workflows need different constraints for the same field,
+each schema states its own constraints independently.
 
-| Style | Structure | Workflows |
-|-------|-----------|-----------|
-| A (properties) | `genome.properties.references.additionalProperties.properties.fasta` | RNAseq, scRNAseq |
-| B (direct) | `genome.fasta` | CLIP, MERIP, Mutation, PacVar, PeakCalling, QuantMS, ncRNAseq, tRNAseq, KARRseq |
-| C (genome name) | `genome.GRCm39.fasta` | CoCulture |
-
-`get_field_type()` handles all three via `_resolve_field()` which checks:
-1. `node["properties"][key]` — Style A
-2. `node["additionalProperties"]["properties"][key]` — dynamic keys
-3. `node[key]` — Style B/C direct access
-
-## API — Validation & Path Discovery
+## API
 
 ```python
-from src.common.util.SchemaValidatorUtil import SchemaValidator
+from src.common.SchemaValidator import SchemaValidator
 
 sv = SchemaValidator()
-sv._schema_dir = "/path/to/Omics/config"
-sv.load("config/RNAseq.schema.json")  # or sv.load_workflow("RNAseq")
 
-# Get all path-type fields
+# Set schema directory (for generate_test_paths which scans all *.schema.json)
+sv._schema_dir = "/path/to/Omics/config"
+
+# Or load specific workflow schema for validate/get_path_fields
+sv.load("config/ncRNAseq.schema.json")
+
+# Get all path-type fields from loaded schema
 fields = sv.get_path_fields()
 # {"genome.fasta": {"type": "str", "path": "file", ...}, ...}
 
-# Validate config
+# Validate config against loaded schema
 errors = sv.validate(config_dict)
+# [] if valid, ["Missing or empty required field: 'genome.fasta'"] if not
 
-# Generate test paths (scans ALL *.schema.json)
+# Generate test paths (scans ALL *.schema.json in schema_dir)
 mapping = sv.generate_test_paths("assests/test/data", "GRCm39")
+# {"genome.fasta": "/abs/path/assests/test/data/ref/GRCm39.fa", ...}
 ```
 
-## API — Type Casting (cast_extra_args)
+## Inject ALL path fields recursively
+
+The injection logic must handle ALL path-like values in the config, not just genome.* fields. This includes `Params.arriba.blacklist`, `Procedure.gatk`, etc.
 
 ```python
-sv.load_workflow("RNAseq")
+def _is_path(val):
+    if val is None: return True
+    if not isinstance(val, str): return False
+    if "/" in val: return True
+    return False
 
-# Cast CLI extra_args to schema-declared types
-extra_args = {
-    "Params.function.enabled": "true",          # str → bool True
-    "Params.star_TEtranscripts.outFilterMultimapNmax": "10",  # str → int 10
-    "counters": "STARsolo",                      # str → list ["STARsolo"]
-    "Procedure.STAR": "/nonexistent/star.sif",   # path=file check
-}
-casted, errors = sv.cast_extra_args(extra_args)
-# casted: {"Params.function.enabled": True, "counters": ["STARsolo"], ...}
-# errors: ["字段 'Procedure.STAR' path=file，文件不存在: '/nonexistent/star.sif'"]
+def _inject(cfg, prefix, wf_extra):
+    """Recursively inject test paths for ALL path-like fields."""
+    for field, val in cfg.items():
+        dotted = f"{prefix}.{field}" if prefix else field
+        if isinstance(val, dict):
+            _inject(val, dotted, wf_extra)
+        elif _is_path(val):
+            wf_extra[dotted] = base_paths.get(dotted, _make_test_path(field, test_data, genome))
+
+# In execute_workflows, per-workflow:
+wf_extra = {}
+_inject(workflow_config, "", wf_extra)
 ```
 
-### Type casting rules
+## Path injection with fallback
 
-| schema type | Casting behavior | Error condition |
-|-------------|-----------------|-----------------|
-| `list`/`array` | Single value → `[value]`; recurses with `items.type` | — |
-| `int` | `int(value)` | Non-numeric string |
-| `float` | `float(value)` | Non-numeric string |
-| `bool` | `true/false/yes/no/1/0` (case-insensitive) | Anything else |
-| `str` | Pass through | Never errors |
-| `dict`/`object` | `json.loads(value)` | Invalid JSON |
-| `null` | Pass through | Non-nullable + empty |
-| (not in schema) | `smart_cast()` fallback | Never errors |
-
-### Path validation
-
-After type casting, if the field has `path` constraint:
-- `path=file` → `os.path.isfile(value)`
-- `path=dir` → `os.path.isdir(value)`
-- `path=prefix` → infers tool from field name, checks `INDEX_MAP` extensions
-
-INDEX_MAP (class-level constant):
-```python
-INDEX_MAP = {
-    "hisat2": [".1.ht2", ".2.ht2", ..., ".8.ht2"],
-    "bwaMem2": [".0123", ".amb", ".ann", ".bwt.2bit.64", ".pac"],
-    "bowtie2": [".1.bt2", ".2.bt2", ".3.bt2", ".4.bt2", ".rev.1.bt2", ".rev.2.bt2"],
-    "bowtie2_for_rRNA": [same as bowtie2],
-}
-```
-
-Tool name inference: longer names preferred (`bowtie2_for_rRNA` over `bowtie2`).
-
-### get_field_type() — Three-level field lookup
+The injection logic in `execute_workflows` must handle fields NOT in schema:
 
 ```python
-sv.get_field_type("Params.star.outFilterMultimapNmax")  # → {"type": "int", ...}
-sv.get_field_type("counters")                             # → {"type": "list", ...}
-sv.get_field_type("unknown_key")                          # → None (falls back to smart_cast)
+def _is_path_like(val):
+    """Heuristic: does this value look like a file path?"""
+    if val is None: return True       # null = needs to be filled
+    if not isinstance(val, str): return False
+    if "/" in val or "\\" in val: return True
+    return False
+
+def _resolve_test_path(field_name, test_data, genome):
+    """Generate a test path for a field not in schema."""
+    from pathlib import Path
+    ref = Path(test_data) / "ref"
+    ref.mkdir(parents=True, exist_ok=True)
+    for name in ("smallrna", "rRNA", "access", "repeat", "decoy"):
+        if name in field_name:
+            return str(ref / name)
+    return str(ref / genome)
+
+# In execute_workflows, per-workflow:
+for field, val in genome_cfg.items():
+    if isinstance(val, dict): continue
+    base_key = f"genome.{field}"
+    if base_key in base_paths:          # schema knows this field
+        wf_extra[base_key] = base_paths[base_key]
+    elif _is_path_like(val):            # fallback: config value looks like a path
+        wf_extra[base_key] = _resolve_test_path(field, test_data, genome)
 ```
 
-Traversal logic in `get_field_type()`:
-1. Split dotted key into parts
-2. For each intermediate part, call `_resolve_field(node, part)`:
-   - Check `node["properties"][part]` (Style A)
-   - Check `node["additionalProperties"]["properties"][part]` (dynamic keys)
-   - Check `node[part]` (Style B/C)
-3. If resolved has child keys (non-meta), step into it (handles `type: "dict"` containers)
-4. If resolved is a pure leaf (no child keys), stop
-5. Resolve final segment → return field definition dict or None
+## Schema generation from config JSONs
 
-**Pitfall — `type: "dict"` with children:** A node like `{"type": "dict", "qc": {...}, "cluster": {...}}` is a container, not a leaf. The traversal checks for non-meta child keys to distinguish.
-
-## API — Integration with run.py
-
-In `execute_workflows()`, before injecting extra_args into workflow_config:
+Schemas are auto-generated from config JSONs using recursive `build_schema()`:
 
 ```python
-if args.schema_validate and args.extra_args:
-    sv = SchemaValidator()
-    sv._schema_dir = os.path.join(root_dir, "config")
-    try:
-        sv.load_workflow(wf_name)
-        casted, errors = sv.cast_extra_args(args.extra_args)
-        if errors:
-            for err in errors:
-                logger.error(f"[{wf_name}] 参数校验失败: {err}")
-            raise ValueError(f"extra_args 校验失败，共 {len(errors)} 个错误")
-        args.extra_args = casted
-    except FileNotFoundError:
-        pass  # No schema → fallback to smart_cast
+def build_schema(cfg):
+    """Recursively build schema mirroring config structure."""
+    schema = {}
+    for k, v in cfg.items():
+        if isinstance(v, dict):
+            schema[k] = build_schema(v)  # recurse for Params, Procedure, genome, etc.
+        else:
+            schema[k] = make_leaf(k, v)  # leaf: type + path + nullable + required
+    return schema
 ```
 
-CLI flag: `--no-schema-validate` disables this (default: enabled).
+This handles arbitrary nesting depth: `Params.star_3pass.pass1.outFilterMultimapNmax`.
 
-**`smart_cast()` moved to SchemaValidatorUtil.py** — imported in run.py as:
-```python
-from src.common.util.SchemaValidatorUtil import SchemaValidator, smart_cast
+**Schema includes ALL sections:** top-level (ROOT_DIR, indir, etc.), genome, Params, Procedure.
+The schema is a complete mirror of the config JSON — nothing omitted.
+
+Path detection heuristics in `make_leaf()`:
+- Key ends with `_prefix` → prefix type
+- Key ends with `_dir` → dir type
+- Key ends with `_index` AND contains "star" → dir type
+- Key ends with `_index` → file type
+- Value is null → `type: "null"`, `required: false`
+- Value contains "/" → file type
+- Known field names (fasta, gtf, fai, dict, bed, etc.) → file type
+- Empty string `""` → `required: false`, no path
+- `.jar` extension → file type (for Java tools like trimmomatic)
+
+**Verification:** After generation, compare schema vs config with recursive diff to catch missing/extra keys.
+
+## generate_test_paths output layout
+
+```
+assests/test/data/
+  ref/
+    GRCm39.fa                    # fasta
+    GRCm39.gtf                   # gtf
+    GRCm39.fai                   # fai
+    GRCm39.dict                  # dict
+    GRCm39.vcf.gz                # known_sites
+    GRCm39.list                  # interval
+    GRCm39.geneIDAnno            # geneIDAnno
+    GRCm39.TE_gtf                # TE_gtf
+    access.bed, repeat.bed, rRNA.fasta, ...
+    smallrna.smallrna.fa         # smallRNA fasta
+    smallrna.smallrna.bed        # smallRNA bed
+    rRNA.rRNA.fasta              # rRNA fasta
+  index/
+    hisat2/GRCm39/               # 8 .ht2 files
+    bowtie2/GRCm39/              # 6 .bt2 files
+    bowtie2_for_rRNA/GRCm39/     # rRNA index
+    bwaMem2/GRCm39/              # 5 files
+    star/GRCm39/                 # directory (Genome, SA, SAindex)
+    star/smallrna/               # smallRNA star index
 ```
 
-## Schema sync workflow
+## Adding a new genome field
 
-When schema is out of sync with actual config JSON:
-
-1. Run comparison script to find mismatches
-2. Use `deep_sync()` to auto-fix (adds missing fields, removes stale required fields)
-3. Skip `env`/`container` keys (runtime-injected, environment-specific)
-4. Re-run comparison to verify
-
-Key principle: **schema mirrors config structure exactly.** No inheritance, no merging.
-
-## Constraint validation (5 types)
-
-`cast_extra_args()` applies constraints in this order:
-
-| # | Constraint | Function | Trigger |
-|---|-----------|----------|---------|
-| 1 | **type** | `_cast_scalar` | Schema declares `type` |
-| 2 | **nullable** | inline | Schema declares `nullable: false` |
-| 3 | **path** | `_validate_path` | Schema declares `path: file/dir/prefix` |
-| 4 | **enum** | `_validate_enum` | Schema declares `enum: [...]` |
-| 5 | **range** | `_validate_range` + `_infer_range` | Schema declares `minimum`/`maximum` OR field name matches `_RANGE_PATTERNS` |
-
-**Schema-unknown fields** (get_field_type returns None): only smart_cast, no constraints.
-
-### Enum — schema declares `enum: [...]`
-### Range — two sources: explicit `minimum`/`maximum` in schema, or inferred from `_RANGE_PATTERNS` (field name substrings → bounds). Patterns: resolution/fdr/pvalue/p_adj/doublet_rate→[0,1], min_genes/threads/top/threshold→[1,∞]. To extend: append to `_RANGE_PATTERNS`.
+1. Add entry to each relevant `config/<wf>.schema.json` under `genome`:
+   ```json
+   "new_field": {"type": "str", "path": "file", "nullable": true, "required": false}
+   ```
+2. Add the field to the corresponding `config/<wf>.json`
+3. No Python code changes — `generate_test_paths()` picks it up automatically
 
 ## Pitfalls
 
-1. **Schema must mirror config structure** — CoCulture has `genome.GRCm39.fasta` (nested), RNAseq has `genome.properties.references` (Style A). Each schema is self-contained.
-2. **`smart_cast` is now in SchemaValidatorUtil** — not in run.py. Import from `src.common.util.SchemaValidatorUtil`.
-3. **Three genome structure styles** — `_resolve_field` handles all three via properties/additionalProperties/direct lookup.
-4. **`type: "dict"` containers** — nodes with both `type` and child keys are containers, not leaves. `get_field_type` traverses into them.
-5. **Path validation checks existence** — `path=file` calls `os.path.isfile()`, `path=prefix` checks index files. Schema may lack `path` for some str fields — those skip validation.
-6. **`env`/`container` fields are runtime-injected** — don't add to schema comparison.
-7. **Schema-unknown fields get no constraint validation** — only smart_cast. Don't apply range/enum inference to fields not in schema (would produce false positives).
-8. **Tool name inference for prefix** — prefers longer match (`bowtie2_for_rRNA` over `bowtie2`). Uses `sorted(INDEX_MAP, key=len, reverse=True)`.
+1. **Schema must mirror config structure** — if config has `genome.GRCm39.fasta` (nested), the schema should have nested genome keys matching. The test framework reads the actual config structure for injection.
+
+2. **Per-workflow means no shared overrides** — if ncRNAseq and RNAseq both require `genome.gtf`, each schema states it independently. No shared "common" section.
+
+3. **`generate_test_paths` scans ALL schemas** — it collects path-type fields from every `*.schema.json` in the config directory. Duplicate field names across schemas are deduplicated.
+
+4. **Schema is NOT the only source of truth for injection** — the injection logic checks schema paths first, then falls back to config value heuristics (`_is_path_like`). This handles new workflows whose fields aren't in any schema yet.
+
+5. **Nested genome structures (CoCulture)** — schemas for dual-species workflows should have nested genome keys. The injection logic detects nested structure via `re.match(r'^[A-Za-z]+[0-9]+$', k)` on genome keys.
+
+6. **`type: "null"` means the field is currently null in config** — the auto-generator sets this when the config value is null. It should be manually corrected to `"str"` (the expected type when filled).
